@@ -15,6 +15,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cwctype>
 #include <mutex>
 #include <span>
@@ -101,12 +102,17 @@ inline bool name_matches(std::string_view n) {
 }
 
 inline std::string value_of(const reframework::InvokeRet& r, const std::string& rn) {
-    if (rn == "System.Boolean") return fmt::format("{}", r.byte != 0 ? 1 : 0);
-    if (rn == "System.Single") return fmt::format("{:.3f}", r.f);
-    if (rn == "System.Int32") return fmt::format("{}", (int32_t)r.dword);
-    if (rn == "System.UInt32") return fmt::format("{}", r.dword);
-    if (rn == "System.Int64" || rn == "System.UInt64") return fmt::format("{}", r.qword);
-    return fmt::format("{} (enum or other)", r.dword);
+    // Build 58: plain conversions (MSVC rejected fmt::format with these union members as a non-constant expression).
+    if (rn == "System.Boolean") return r.byte != 0 ? std::string{"1"} : std::string{"0"};
+    if (rn == "System.Single") {
+        char buf[32]{};
+        std::snprintf(buf, sizeof(buf), "%.3f", (double)r.f);
+        return std::string{buf};
+    }
+    if (rn == "System.Int32") return std::to_string((int32_t)r.dword);
+    if (rn == "System.UInt32") return std::to_string((uint32_t)r.dword);
+    if (rn == "System.Int64" || rn == "System.UInt64") return std::to_string((uint64_t)r.qword);
+    return std::to_string((uint32_t)r.dword) + " (enum or other)";
 }
 
 // Main thread, once.
