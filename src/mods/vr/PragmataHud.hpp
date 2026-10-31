@@ -220,6 +220,9 @@ struct HudTune {
     // Build 59: sharp textures in VR. The game's own render config is asked for the highest minimum streaming texture
     // resolution and no load level bias (PragmataTexDiag.hpp), so textures do not stay at low detail in the headset.
     bool sharp_textures{true};
+    // Build 60: developer switch for the gun reticle: true = NEW (its Eye gap applies, RETICLE section), false =
+    // ORIGINAL (drawn exactly as in v0.9.1).
+    bool reticle_new{true};
     bool hud_fixed{true};    // HUD fixed in the room (Build 12, Steve's standing preference). Off = follows the head
     bool lock_invert{false}; // flips the fixed-HUD correction if it turns out mirrored on some runtime
     bool hide_ghost{true};   // hide Pragmata's offset "aberration" layers (zz_pragmatavr_hide_ghost.lua reads this)
@@ -654,6 +657,7 @@ enum MenuAction : int {
     ActionToggleMenuNative,     // Build 55
     ActionToggleLowHealth,      // Build 57
     ActionToggleSharpTextures,  // Build 59
+    ActionToggleReticleMode,    // Build 60
 };
 
 class HudTuning {
@@ -1144,6 +1148,8 @@ private:
             "A = On: full-screen menus (Firmware Updater, terminals...) draw in NATIVE while open, no AFW trails. Off: keep AFW");
         column = 1;
         add_header("DEVELOPER", "TOOLS");
+        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleReticleMode, "Reticle",
+            "A = New (the RETICLE section's Eye gap sets its depth) or Original (drawn as before Build 60)");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleHackBackdrop, "Door hack backdrop",
             "A = hide or show the dark backdrop behind the door and lock hacking HUD");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleCaptureCorners, "Fixed HUD capture",
@@ -1312,6 +1318,8 @@ private:
         s += fmt::format("hide_low_health={}\n", t.hide_low_health ? 1 : 0);
         s += "# sharp_textures: 1 = keep high resolution textures loaded in VR (Build 59).\n";
         s += fmt::format("sharp_textures={}\n", t.sharp_textures ? 1 : 0);
+        s += "# reticle_new: 1 = gun reticle uses the RETICLE Eye gap, 0 = original drawing (Build 60).\n";
+        s += fmt::format("reticle_new={}\n", t.reticle_new ? 1 : 0);
         s += fmt::format("menu_native={}\n", t.menu_native ? 1 : 0);
         s += fmt::format("hud_fixed={}\n", t.hud_fixed ? 1 : 0);
         s += fmt::format("lock_invert={}\n", t.lock_invert ? 1 : 0);
@@ -1524,6 +1532,7 @@ private:
                 else if (key == "menu_native") t->menu_native = val != 0.0f;
                 else if (key == "hide_low_health") t->hide_low_health = val != 0.0f;
                 else if (key == "sharp_textures") t->sharp_textures = val != 0.0f;
+                else if (key == "reticle_new") t->reticle_new = val != 0.0f;
                 else if (key == "hud_fixed") t->hud_fixed = val != 0.0f;
                 else if (key == "lock_invert") t->lock_invert = val != 0.0f;
                 else if (key == "hide_ghost") t->hide_ghost = val != 0.0f;
@@ -2020,6 +2029,11 @@ private:
                     t->enemy_locked = !t->enemy_locked;
                     commit(t);
                     spdlog::info("[PragmataVR] Menu: enemy health bars {}", t->enemy_locked ? "locked" : "unlocked");
+                    play_click(true);
+                } else if (row.action == ActionToggleReticleMode) {
+                    t->reticle_new = !t->reticle_new;
+                    commit(t);
+                    spdlog::info("[PragmataVR] Menu: reticle {}", t->reticle_new ? "new" : "original");
                     play_click(true);
                 } else if (row.action == ActionToggleSharpTextures) {
                     t->sharp_textures = !t->sharp_textures;

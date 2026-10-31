@@ -3462,6 +3462,10 @@ PragmataRowView pragmata_row_view(const pragmatavr::HudTune& t, const pragmatavr
             v.value_color = t.show_boxes ? AMBER : ACCENT;
             v.dim = !t.hud_panel; // ANCHORED only
             break;
+        case pragmatavr::ActionToggleReticleMode:
+            v.value = t.reticle_new ? "NEW" : "ORIGINAL";
+            v.value_color = t.reticle_new ? ACCENT : AMBER;
+            break;
         case pragmatavr::ActionToggleSharpTextures:
             v.value = t.sharp_textures ? "ON" : "OFF";
             v.value_color = ACCENT;
@@ -4832,6 +4836,9 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
             if (ftune->enabled && ftune->flat_test) {
                 std::string_view fpartner{};
                 int fgroup = pragmatavr::group_for(name);
+                if (fgroup == pragmatavr::GroupReticle && !ftune->reticle_new) {
+                    fgroup = -1; // Build 60: Reticle = ORIGINAL, drawn as in v0.9.1
+                }
                 const bool fnative = fgroup >= 0;
                 if (!fnative) {
                     fgroup = pragmatavr::companion_group(name, fpartner);
