@@ -62,6 +62,16 @@
 
 namespace pragmatavr {
 
+// Build 61: FNV-1a 64 for GUI names (the subtitle GUI is chosen by name in the ini).
+inline constexpr uint64_t name_hash(std::string_view s) {
+    uint64_t h = 1469598103934665603ull;
+    for (const char c : s) {
+        h ^= (uint8_t)c;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
 enum class EyeMode : int {
     Current = 0,
     Swapped = 1,
@@ -77,8 +87,9 @@ enum Group : int {
     GroupTutorial = 4,
     GroupItems = 5, // Build 47: item pickups (ui2120Gui, top right on a monitor: the cubes collected, etc.)
     GroupObjective = 6, // Build 53: objective banner (ui2110Gui, top middle on a monitor: "Restore the power to the lunar base")
-    GroupSubtitles = 7, // v0.9.2 Build 58: subtitles. Build 60: ui0400Gui (Build 58 / 59 used ui2010Gui, whose texts never showed)
-    GroupReticle = 8,   // Build 60: gun reticle (ui2001Gui, ui3300Gui): stays in the eyes, only its Eye gap is tuned
+    GroupSubtitles = 7, // v0.9.2 Build 58: subtitles. Build 61: ui2010Gui again (its layout has the subtitle / name / caption
+                        // panels; Build 60's ui0400Gui is the Skip / Pause / Close bar), name set by subtitle_gui in the ini
+    GroupReticle = 8,   // Build 60: gun reticle (ui2001Gui, ui3300Gui). Build 61: on its own view-space layer (no AFW)
     GroupCount = 9,
 };
 
@@ -126,8 +137,8 @@ inline constexpr std::array<std::array<float, 2>, GroupCount> FLAT_PIVOTS{{
     {305.0f, 300.0f},  // tutorial box
     {1640.0f, 200.0f}, // Build 47: item pickups (estimate, top right; the content extent log measures it)
     {960.0f, 110.0f},  // Build 53: objective banner (estimate, top middle, from the game's Options preview)
-    {960.0f, 900.0f},  // Build 58: subtitles. Build 60: middle of the bottom band (ui0400Gui, layout to be measured)
-    {960.0f, 540.0f},  // Build 60: reticle (not moved or resized, only shifted per eye)
+    {960.0f, 930.0f},  // Build 58: subtitles: the ui2010Gui layout anchor (960, 930)
+    {960.0f, 540.0f},  // Build 60: reticle (canvas centre; drawn at full size, its layer is sized by Size)
 }};
 
 // Build 25: each element's area in the game's own layout (canvas pixels, 1920 x 1080, x0 y0 x1 y1), with a margin. From
@@ -154,27 +165,36 @@ inline constexpr std::array<std::array<float, 4>, GroupCount> FLAT_BOXES{{
                                        // right: the hub panel ("Y" stations) and the resource counter, measured in snapshots
     {480.0f, 0.0f, 1440.0f, 360.0f},   // Build 53: objective banner (icon, objective line). Build 56: bottom 260 -> 360 for the
                                        // second and third objective lines (secondaryObjective +102, tertiaryObjective +148)
-    {160.0f, 700.0f, 1760.0f, 1080.0f}, // Build 60: subtitles (ui0400Gui): a wide bottom band until its layout dump is
-                                        // read (Build 59 used the ui2010Gui layout, the wrong GUI). Only cut while a line shows.
-    {0.0f, 0.0f, 0.0f, 0.0f},           // Build 60: reticle (stays in the eyes)
+    {560.0f, 700.0f, 1360.0f, 975.0f}, // Build 61: subtitles (ui2010Gui layout dump: lines centered on 960, 930, text region
+                                       // 650 wide, two speakers with names and captions up to 230 above). Only cut while a line
+                                       // shows, and the subtitles are pinned to their anchor meanwhile (PragmataFixes).
+    {780.0f, 360.0f, 1140.0f, 720.0f}, // Build 61: reticle, drawn flat it sits around the canvas centre (960, 540); 360 x 360
+                                       // also holds the bigger gun reticles. Shown on its own view-space layer.
 }};
 
 // Build 56: item pickups away from the hub: only the resource counter and the pickup notices (the replicator panel,
 // ui2093, is not shown), so Fixed mode cuts a much smaller area out of the top middle of the eye images.
 inline constexpr std::array<float, 4> ITEMS_BOX_FIELD{1150.0f, 0.0f, 1940.0f, 380.0f};
 // Build 56: set on the main thread (PragmataFixes) while the item pickups' replicator panel is shown.
-inline std::atomic<bool> g_items_hub{true};
+// Build 61: false by default (the field area), so a broken check cannot leave the big area in use everywhere.
+inline std::atomic<bool> g_items_hub{false};
+// Build 61: the subtitle GUI's name hash (ini subtitle_gui, default ui2010Gui), read by group_for on the render threads.
+inline std::atomic<uint64_t> g_subtitle_hash{name_hash("ui2010Gui")};
 // Build 58: set on the main thread (PragmataFixes) while ui0400Gui (Build 60) shows subtitle text. It is drawn all the time,
 // so its (large, low in the view) area is only cut out of the eyes while a line is actually on screen.
-inline std::atomic<bool> g_subtitles_shown{true};
+inline std::atomic<bool> g_subtitles_shown{false}; // Build 61: off until the check sees a line
 
 // Build 57: while a snapshot is taken, the GUI draw callbacks collect the names of every GUI drawn (steady clock ms;
 // PragmataFixes logs them), to identify effects such as the low health screen edges.
 inline std::atomic<int64_t> g_gui_list_until_ms{0};
 
+inline std::atomic<int> g_items_area_mode_cache{0}; // Build 61: 0 auto, 1 always the full area, 2 always the field area (set from the ini)
 inline std::array<float, 4> box_for(int g) {
-    if (g == GroupItems && !g_items_hub.load(std::memory_order_relaxed)) {
-        return ITEMS_BOX_FIELD;
+    if (g == GroupItems) {
+        const int m = g_items_area_mode_cache.load(std::memory_order_relaxed);
+        if (m == 2 || (m == 0 && !g_items_hub.load(std::memory_order_relaxed))) {
+            return ITEMS_BOX_FIELD;
+        }
     }
     return FLAT_BOXES[g];
 }
@@ -220,9 +240,16 @@ struct HudTune {
     // Build 59: sharp textures in VR. The game's own render config is asked for the highest minimum streaming texture
     // resolution and no load level bias (PragmataTexDiag.hpp), so textures do not stay at low detail in the headset.
     bool sharp_textures{true};
-    // Build 60: developer switch for the gun reticle: true = NEW (its Eye gap applies, RETICLE section), false =
-    // ORIGINAL (drawn exactly as in v0.9.1).
+    // Build 60: developer switch for the gun reticle: true = NEW (Build 61: on its own view-space layer, RETICLE Size and
+    // Distance), false = ORIGINAL (drawn exactly as in v0.9.1).
     bool reticle_new{true};
+    // Build 61: the subtitle GUI (ini subtitle_gui) and whether it is pinned to its monitor anchor while the HUD panels
+    // are on (the game otherwise places walk-and-talk subtitles next to the speaker, outside their capture area).
+    std::string subtitle_gui{"ui2010Gui"};
+    bool subtitle_pin{true};
+    // Build 61: item pickups area: 0 = automatic (the big area only while a replicator list is open), 1 = always the big
+    // area (Builds 58-60), 2 = always the field area.
+    int items_area{0};
     bool hud_fixed{true};    // HUD fixed in the room (Build 12, Steve's standing preference). Off = follows the head
     bool lock_invert{false}; // flips the fixed-HUD correction if it turns out mirrored on some runtime
     bool hide_ghost{true};   // hide Pragmata's offset "aberration" layers (zz_pragmatavr_hide_ghost.lua reads this)
@@ -255,8 +282,10 @@ struct HudTune {
     // as one virtual screen. Steve found the single screen no better and it broke the hacking circle, so Build 11
     // always uses 0 (the ini value is ignored; the game-screen code is kept for reference).
     int layout_mode{0};
-    std::array<float, 4> screen{100.0f, 2.5f, 0.0f, 0.0f}; // width (degrees), distance (m), left/right (deg), up/down (deg). v0.9.0: Quest 3 tuning
-    std::array<bool, 4> screen_invert{};
+    // width (degrees), distance (m), left/right (deg), up/down (deg). v0.9.0: Quest 3 tuning. Build 61: [4] = reticle distance (m),
+    // 1.0 = where REFramework's own 2D UI sheet showed it (VR_2DUIDistance).
+    std::array<float, 5> screen{100.0f, 2.5f, 0.0f, 0.0f, 1.0f};
+    std::array<bool, 5> screen_invert{};
 
     // Build 35: PERFORMANCE section. These drive REFramework's own settings (VR::on_present applies them), so the
     // values in re2_fw_config.txt for them no longer matter.
@@ -414,8 +443,9 @@ inline int group_for(std::string_view name) {
     if (name == "ui2100Gui" || name == "ui2002_00Gui") return GroupTutorial;
     if (name == "ui2120Gui") return GroupItems; // Build 47: item pickups (HUD Controls calls it "Inventory Items")
     if (name == "ui2110Gui") return GroupObjective; // Build 53: objective banner (HUD Controls calls it "Objective Message")
-    // Build 60: the subtitles seen in conversations are ui0400Gui (ui2010Gui, used in Builds 58 / 59, never showed text).
-    if (name == "ui0400Gui") return GroupSubtitles;
+    // Build 61: the subtitle GUI is named in the ini (subtitle_gui, default ui2010Gui). Build 60's ui0400Gui is the
+    // Skip / Pause / Close bar, drawn as before again.
+    if (const auto sh = g_subtitle_hash.load(std::memory_order_relaxed); sh != 0 && name_hash(name) == sh) return GroupSubtitles;
     // Build 60: the gun reticle (both aiming snapshot series drew ui2001Gui; the second gun also ui3300Gui).
     if (name == "ui2001Gui" || name == "ui3300Gui") return GroupReticle;
     return -1;
@@ -571,12 +601,14 @@ enum ScreenField : int {
     ScreenDistance = 1,
     ScreenYaw = 2,
     ScreenPitch = 3,
+    ScreenReticleDist = 4, // Build 61
 };
-inline constexpr std::array<const char*, 4> SCREEN_KEYS{"width", "distance", "yaw", "pitch"};
-inline constexpr std::array<float, 4> SCREEN_MIN{20.0f, 0.5f, -60.0f, -45.0f};
-inline constexpr std::array<float, 4> SCREEN_MAX{140.0f, 10.0f, 60.0f, 45.0f};
-inline constexpr std::array<float, 4> SCREEN_STEP{2.0f, 0.1f, 1.0f, 1.0f};
-inline constexpr std::array<float, 4> SCREEN_STEP_BIG{10.0f, 0.5f, 5.0f, 5.0f};
+inline constexpr int SCREEN_FIELDS = 5;
+inline constexpr std::array<const char*, SCREEN_FIELDS> SCREEN_KEYS{"width", "distance", "yaw", "pitch", "reticle_distance"};
+inline constexpr std::array<float, SCREEN_FIELDS> SCREEN_MIN{20.0f, 0.5f, -60.0f, -45.0f, 0.3f};
+inline constexpr std::array<float, SCREEN_FIELDS> SCREEN_MAX{140.0f, 10.0f, 60.0f, 45.0f, 20.0f};
+inline constexpr std::array<float, SCREEN_FIELDS> SCREEN_STEP{2.0f, 0.1f, 1.0f, 1.0f, 0.1f};
+inline constexpr std::array<float, SCREEN_FIELDS> SCREEN_STEP_BIG{10.0f, 0.5f, 5.0f, 5.0f, 0.5f};
 
 // Build 40: enemy health bars (ui3200Gui, boss ui3210Gui). With the headset projection they land a fixed amount left of
 // and above the enemy (Quest 3 test); these move them back, in canvas pixels (y positive = down). Headset projection only.
@@ -971,6 +1003,7 @@ public:
         case ScreenDistance: return fmt::format("{:.1f} m", t.screen[1]);
         case ScreenYaw: return fmt::format("{:+.0f} deg", t.screen[2]);
         case ScreenPitch: return fmt::format("{:+.0f} deg", t.screen[3]);
+        case ScreenReticleDist: return fmt::format("{:.1f} m", t.screen[4]);
         default: return {};
         }
     }
@@ -1125,8 +1158,9 @@ private:
         add_section(section_for_group(GroupReticle), GROUP_TITLES[GroupReticle]);
         m_rows.back().group = GroupReticle;
         add_row(MenuRow::Kind::Toggle, GroupReticle, -1, ActionToggleHackLock, "Lock", "A = lock or unlock this element (locked = its values cannot change)");
-        add_row(MenuRow::Kind::Value, GroupReticle, FieldGap, ActionNone, "Eye gap",
-            "A = edit the gap between the eyes for the gun reticle. Higher = closer to you, lower = further away");
+        add_row(MenuRow::Kind::Value, GroupReticle, FieldSize, ActionNone, "Size", "A = edit. Size of the gun reticle");
+        add_row(MenuRow::Kind::Value, GROUP_SCREEN, ScreenReticleDist, ActionNone, "Distance",
+            "A = edit. How far away the gun reticle is shown (meters). Its size in view stays the same");
         add_row(MenuRow::Kind::Action, GroupReticle, -1, ActionResetGroup, "Reset to defaults", "A = back to the starting values (blocked while locked)");
 
         // ==== ADVANCED ====
@@ -1149,7 +1183,7 @@ private:
         column = 1;
         add_header("DEVELOPER", "TOOLS");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleReticleMode, "Reticle",
-            "A = New (the RETICLE section's Eye gap sets its depth) or Original (drawn as before Build 60)");
+            "A = New (own layer: no AFW doubling, RETICLE Size and Distance) or Original (drawn as before Build 60)");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleHackBackdrop, "Door hack backdrop",
             "A = hide or show the dark backdrop behind the door and lock hacking HUD");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleCaptureCorners, "Fixed HUD capture",
@@ -1318,8 +1352,15 @@ private:
         s += fmt::format("hide_low_health={}\n", t.hide_low_health ? 1 : 0);
         s += "# sharp_textures: 1 = keep high resolution textures loaded in VR (Build 59).\n";
         s += fmt::format("sharp_textures={}\n", t.sharp_textures ? 1 : 0);
-        s += "# reticle_new: 1 = gun reticle uses the RETICLE Eye gap, 0 = original drawing (Build 60).\n";
+        s += "# reticle_new: 1 = gun reticle on its own layer (RETICLE Size and Distance), 0 = original drawing (Build 61).\n";
         s += fmt::format("reticle_new={}\n", t.reticle_new ? 1 : 0);
+        s += "# subtitle_gui: the GUI that draws the subtitles (Build 61; none = subtitles not moved to a panel).\n";
+        s += "# subtitle_pin: 1 = subtitles held at their screen spot while shown on their panel (not next to the speaker).\n";
+        s += fmt::format("subtitle_gui={}\n", t.subtitle_gui.empty() ? std::string{"none"} : t.subtitle_gui);
+        s += fmt::format("subtitle_pin={}\n", t.subtitle_pin ? 1 : 0);
+        s += "# items_area: item pickups area. 0 = automatic (big area only while a replicator list is open), 1 = always big,\n";
+        s += "#   2 = always the small field area (Build 61).\n";
+        s += fmt::format("items_area={}\n", t.items_area);
         s += fmt::format("menu_native={}\n", t.menu_native ? 1 : 0);
         s += fmt::format("hud_fixed={}\n", t.hud_fixed ? 1 : 0);
         s += fmt::format("lock_invert={}\n", t.lock_invert ? 1 : 0);
@@ -1376,7 +1417,7 @@ private:
         s += fmt::format("hack.headset_x={:.2f}\n", t.hack_headset.x);
         s += fmt::format("hack.headset_y={:.2f}\n", t.hack_headset.y);
         s += fmt::format("hack.headset_gap={:.2f}\n", t.hack_headset.gap);
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < SCREEN_FIELDS; ++i) {
             if (i == ScreenDistance) continue; // written below
             s += fmt::format("screen.{}={:.2f}\n", SCREEN_KEYS[i], t.screen[i]);
         }
@@ -1509,6 +1550,16 @@ private:
                 continue;
             }
 
+            // Build 61: the one text value.
+            if (key == "subtitle_gui") {
+                if (val_str.size() < 64 && val_str.rfind("ui", 0) == 0) {
+                    t->subtitle_gui = val_str;
+                } else if (val_str == "none") {
+                    t->subtitle_gui.clear();
+                }
+                continue;
+            }
+
             float val = 0.0f;
             try {
                 val = std::stof(val_str);
@@ -1533,6 +1584,8 @@ private:
                 else if (key == "hide_low_health") t->hide_low_health = val != 0.0f;
                 else if (key == "sharp_textures") t->sharp_textures = val != 0.0f;
                 else if (key == "reticle_new") t->reticle_new = val != 0.0f;
+                else if (key == "subtitle_pin") t->subtitle_pin = val != 0.0f;
+                else if (key == "items_area") t->items_area = std::clamp((int)val, 0, 2);
                 else if (key == "hud_fixed") t->hud_fixed = val != 0.0f;
                 else if (key == "lock_invert") t->lock_invert = val != 0.0f;
                 else if (key == "hide_ghost") t->hide_ghost = val != 0.0f;
@@ -1598,7 +1651,7 @@ private:
             }
 
             if (group_key == "screen") {
-                for (int i = 0; i < 4; ++i) {
+                for (int i = 0; i < SCREEN_FIELDS; ++i) {
                     if (rest == SCREEN_KEYS[i]) {
                         if (is_invert) t->screen_invert[i] = false; // v0.9.0: INV boxes removed
                         else t->screen[i] = std::clamp(val, SCREEN_MIN[i], SCREEN_MAX[i]);
@@ -1673,6 +1726,7 @@ private:
         }
 
         g_click_volume_pct = (int)std::lround(t->menu[MenuClickVolume] * 100.0f);
+        publish_names(*t);
 
         if (old_file) {
             write_file(*t); // upgrade the file to this build's format (also sets m_mtime)
@@ -1686,8 +1740,15 @@ private:
         m_loaded_once = true;
     }
 
+    // Build 61: values the render threads read without a tune copy.
+    static void publish_names(const HudTune& t) {
+        g_subtitle_hash.store(t.subtitle_gui.empty() ? 0 : name_hash(t.subtitle_gui), std::memory_order_relaxed);
+        g_items_area_mode_cache.store(t.items_area, std::memory_order_relaxed);
+    }
+
     void commit(const std::shared_ptr<HudTune>& t) {
         g_click_volume_pct = (int)std::lround(t->menu[MenuClickVolume] * 100.0f);
+        publish_names(*t);
         write_file(*t);
         std::scoped_lock _{m_mtx};
         m_tune = t;
@@ -1925,7 +1986,8 @@ private:
         }
 
         if (vk == VK_RETURN && row.kind == MenuRow::Kind::Value && !menu_on_invert.load()) {
-            if ((row.group >= 0 && row.group < GroupCount && group_locked(*t, row.group)) || (row.group == GROUP_ENEMY && enemy_field_locked(*t, row.field))) {
+            if ((row.group >= 0 && row.group < GroupCount && group_locked(*t, row.group)) || (row.group == GROUP_ENEMY && enemy_field_locked(*t, row.field)) ||
+                (row.group == GROUP_SCREEN && row.field == ScreenReticleDist && group_locked(*t, GroupReticle))) { // Build 61
                 play_click(false);
                 return;
             }
@@ -2186,6 +2248,9 @@ private:
                         t->hack_headset.invert = inverts;
                     } else if (t->flat_test) {
                         t->flat_groups[row.group] = default_flat_group(row.group);
+                        if (row.group == GroupReticle) {
+                            t->screen[ScreenReticleDist] = HudTune{}.screen[ScreenReticleDist]; // Build 61
+                        }
                     } else {
                         const auto inverts = t->groups[row.group].invert;
                         t->groups[row.group] = default_group(row.group);
@@ -2533,8 +2598,9 @@ inline glm::vec2 fixed_capture_shift(const HudTune& t, int g, float w, float h) 
         const float bottom_px = (h - M) - s * (ob[3] - ob[1]) - GAP;
         return glm::vec2{0.0f, (bottom_px - (oy + s * cy1)) / s};
     }
-    const bool right = g == GroupWeapons;
-    const bool bottom = g == GroupHealth;
+    // Build 61: the reticle takes the bottom right corner (free since stamina moved above health in Build 58).
+    const bool right = g == GroupWeapons || g == GroupReticle;
+    const bool bottom = g == GroupHealth || g == GroupReticle;
     const float tx = right ? ((w - M) - (ox + s * cx1)) / s : (M - (ox + s * cx0)) / s;
     const float ty = bottom ? ((h - M) - (oy + s * cy1)) / s : (M - (oy + s * cy0)) / s;
     return glm::vec2{tx, ty};
@@ -2580,6 +2646,51 @@ inline std::vector<AnchoredBox> anchored_boxes_px(const HudTune& t, float w, flo
         a.oy = (long)std::lround(a.dcy - (a.y0 + a.y1) * 0.5f);
         if (a.x1 > a.x0 + 1 && a.y1 > a.y0 + 1) {
             out.push_back(a);
+        }
+    }
+    return out;
+}
+
+// Build 61: capture area audit (logged when the UI buffer size changes). For each element: where its capture area sits in
+// game canvas pixels (the 1920 x 1080 canvas fitted to the UI buffer width; the canvas itself is the part of the eye
+// image the game's 16:9 view covers, anything outside it is the extra height of the headset image), how much of it lies
+// inside the canvas, and any overlap between two elements' capture areas (there should be none).
+inline std::string capture_audit(const HudTune& t, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f) {
+        return {};
+    }
+    struct R { float x0, y0, x1, y1; int g; };
+    std::vector<R> rs{};
+    std::string out{};
+    for (int g = GroupHealth; g < GroupCount; ++g) {
+        for (int variant = 0; variant < (g == GroupItems ? 2 : 1); ++variant) {
+            std::array<float, 4> b = FLAT_BOXES[g];
+            if (g == GroupItems && variant == 1) {
+                b = ITEMS_BOX_FIELD;
+            }
+            const auto sh = fixed_capture_shift(t, g, w, h);
+            // The capture spot is placed from the box in use now (its top left corner for item pickups); each variant
+            // keeps that corner and its own size.
+            const auto cb = box_for(g);
+            R r{cb[0] + sh.x, cb[1] + sh.y, cb[0] + sh.x + (b[2] - b[0]), cb[1] + sh.y + (b[3] - b[1]), g};
+            const float ix0 = (std::max)(r.x0, 0.0f), iy0 = (std::max)(r.y0, 0.0f);
+            const float ix1 = (std::min)(r.x1, 1920.0f), iy1 = (std::min)(r.y1, 1080.0f);
+            const float area = (r.x1 - r.x0) * (r.y1 - r.y0);
+            const float inside = (ix1 > ix0 && iy1 > iy0) ? (ix1 - ix0) * (iy1 - iy0) : 0.0f;
+            out += fmt::format(" {}{} ({:.0f},{:.0f})-({:.0f},{:.0f}) {:.0f}% in canvas;", GROUP_KEYS[g], variant == 1 ? "(field)" : "",
+                               r.x0, r.y0, r.x1, r.y1, area > 0.0f ? 100.0f * inside / area : 0.0f);
+            if (variant == 0) {
+                rs.push_back(r);
+            }
+        }
+    }
+    for (size_t i = 0; i < rs.size(); ++i) {
+        for (size_t j = i + 1; j < rs.size(); ++j) {
+            const auto& a = rs[i];
+            const auto& c = rs[j];
+            if (a.x0 < c.x1 && c.x0 < a.x1 && a.y0 < c.y1 && c.y0 < a.y1) {
+                out += fmt::format(" OVERLAP {} / {};", GROUP_KEYS[a.g], GROUP_KEYS[c.g]);
+            }
         }
     }
     return out;

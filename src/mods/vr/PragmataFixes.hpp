@@ -119,6 +119,9 @@ public:
                 break;
             }
         }
+        if (const auto sh = pragmatavr::g_subtitle_hash.load(std::memory_order_relaxed); sh != 0 && pragmatavr::name_hash(name) == sh) {
+            s_subtitle_seen_ms.store(now_ms(), std::memory_order_relaxed);
+        }
         return true;
     }
 
@@ -165,7 +168,7 @@ private:
         uint32_t kinds;
     };
 
-    static inline const std::array<Target, 11> TARGETS{{
+    static inline const std::array<Target, 10> TARGETS{{
         {"ui2100Gui", "ui2100Gui"_fnv, KindGhost},
         {"ui2110Gui", "ui2110Gui"_fnv, KindGhost},
         {"ui2120Gui", "ui2120Gui"_fnv, KindGhost},
@@ -176,13 +179,14 @@ private:
         {"ui3500Gui", "ui3500Gui"_fnv, KindDoor},
         {"ui3510Gui", "ui3510Gui"_fnv, KindDoor},
         {"ui3010Gui", "ui3010Gui"_fnv, KindLabel},
-        {"ui0400Gui", "ui0400Gui"_fnv, KindSubtitle}, // Build 58: subtitles shown? (read only). Build 60: ui0400Gui
     }};
 
     // Only elements drawn within this window are looked up (absent HUD screens cost nothing).
     static constexpr int64_t SEEN_WINDOW_MS = 2000;
 
-    static inline std::array<std::atomic<int64_t>, 11> s_seen_ms{};
+    static inline std::array<std::atomic<int64_t>, 10> s_seen_ms{};
+    // Build 61: the subtitle GUI (named in the ini, so it is not in TARGETS).
+    static inline std::atomic<int64_t> s_subtitle_seen_ms{0};
     static inline bool s_announced{false};
 
     // Main thread only.
@@ -209,6 +213,80 @@ private:
             s_gui_list.clear();
         }
         spdlog::info("[PragmataVR] Snapshot GUIs drawn:{}", names);
+        snapshot_texts(names);
+    }
+
+    // Build 61: for each GUI drawn during a snapshot, the texts it shows (visible, non-empty), so a snapshot names the GUI
+    // behind any text on screen (subtitles, prompts). The first four snapshots of a session also dump the layout of the
+    // subtitle GUI and of the item pickups element as they are at that moment.
+    static void snapshot_texts(const std::string& names) {
+        auto scene = sdk::get_current_scene();
+        if (scene == nullptr) {
+            return;
+        }
+        auto ctx = sdk::get_thread_context();
+        const auto tune = pragmatavr::HudTuning::get().tune();
+        static int snapshots = 0;
+        ++snapshots;
+        size_t start = 0;
+        int guis = 0;
+        while (start < names.size() && guis < 48) {
+            while (start < names.size() && names[start] == ' ') ++start;
+            size_t end = names.find(' ', start);
+            if (end == std::string::npos) end = names.size();
+            const std::string n = names.substr(start, end - start);
+            start = end;
+            if (n.empty() || n.rfind("ui", 0) != 0) {
+                continue;
+            }
+            ++guis;
+            auto view = view_of(scene, n, ctx);
+            if (view == nullptr) {
+                continue;
+            }
+            std::vector<std::string> found{};
+            collect_texts(view, 0, true, found, ctx);
+            if (!found.empty()) {
+                std::string line{};
+                for (const auto& f : found) {
+                    line += " | " + f;
+                }
+                spdlog::info("[PragmataVR] Snapshot texts in {}:{}", n, line);
+            }
+            if (snapshots <= 4 && (n == tune->subtitle_gui || n == "ui2120Gui")) {
+                spdlog::info("[PragmataVR] Layout dump {} (snapshot) (view type {}):", n, sdk::call_object_func<uint32_t>(view, "get_ViewType", ctx, view));
+                int count = 0;
+                dump_node(view, 0, count, ctx);
+                spdlog::info("[PragmataVR] Layout dump {} (snapshot) end ({} nodes)", n, count);
+            }
+        }
+    }
+
+    static void collect_texts(REManagedObject* o, int depth, bool shown_chain, std::vector<std::string>& out, sdk::VMContext* ctx) {
+        for (auto c = o; c != nullptr && out.size() < 12; ) {
+            const bool here = shown_chain && sdk::call_object_func<bool>(c, "get_Visible", ctx, c);
+            if (here && type_name(c) == "via.gui.Text") {
+                auto msg = sdk::call_object_func<SystemString*>(c, "get_Message", ctx, c);
+                auto m = msg != nullptr ? utility::re_string::get_string(msg) : std::string{};
+                if (m.find_first_not_of(" \t\r\n") != std::string::npos) {
+                    for (auto& ch : m) {
+                        if (ch == '\n' || ch == '\r') ch = ' ';
+                    }
+                    auto nm = sdk::call_object_func<SystemString*>(c, "get_Name", ctx, c);
+                    out.push_back(fmt::format("{}: {}", nm != nullptr ? utility::re_string::get_string(nm) : std::string{"?"}, m.substr(0, 70)));
+                }
+            }
+            if (here && depth < 14) {
+                auto child = sdk::call_object_func<REManagedObject*>(c, "get_Child", ctx, c);
+                if (child != nullptr) {
+                    collect_texts(child, depth + 1, true, out, ctx);
+                }
+            }
+            if (depth == 0) {
+                break;
+            }
+            c = sdk::call_object_func<REManagedObject*>(c, "get_Next", ctx, c);
+        }
     }
 
     static inline std::mutex s_logged_mtx{};
@@ -321,34 +399,91 @@ private:
             }
             // Build 54: one-time layout dumps of the objective banner and the item pickups element, to find the piece
             // that clips them when Size is below 1.
-            // Build 58: is a subtitle on screen? (Fixed and Follows Head then cut its area out of the eyes.)
-            if (tg.kinds & KindSubtitle) {
-                subtitles(view, ctx);
-            }
-            if (tg.hash == "ui2110Gui"_fnv || tg.hash == "ui2120Gui"_fnv || tg.hash == "ui2100Gui"_fnv ||
-                tg.hash == "ui0400Gui"_fnv) { // Build 55: tutorial too. Build 60: subtitles (ui0400Gui) too
+            if (tg.hash == "ui2110Gui"_fnv || tg.hash == "ui2120Gui"_fnv || tg.hash == "ui2100Gui"_fnv) { // Build 55: tutorial too
                 maybe_dump(view, tg, now, ctx);
             }
         }
+
+        // Build 61: the subtitle GUI (ini subtitle_gui): is a line on screen, and hold it at its screen spot meanwhile.
+        const auto sub_seen = s_subtitle_seen_ms.load(std::memory_order_relaxed);
+        if (tune->subtitle_gui.empty() || sub_seen == 0 || now - sub_seen > SEEN_WINDOW_MS) {
+            pragmatavr::g_subtitles_shown.store(false, std::memory_order_relaxed);
+        } else if (auto view = view_of(scene, tune->subtitle_gui, ctx); view != nullptr) {
+            subtitles(view, *tune, now, ctx);
+        }
     }
 
-    // Build 58: a subtitle is shown when some via.gui.Text in ui2010Gui is visible (it and every parent), has some alpha
-    // and a non-empty message. If the tree holds no Text at all the check cannot work, so the area is always used.
-    static void subtitles(REManagedObject* view, sdk::VMContext* ctx) {
+    // Build 61: the view of a GUI game object found by name (nullptr if it is not in the scene).
+    static REManagedObject* view_of(REManagedObject* scene, const std::string& name, sdk::VMContext* ctx) {
+        auto go = find_game_object(scene, name.c_str(), ctx);
+        if (go == nullptr || go->transform == nullptr) {
+            return nullptr;
+        }
+        auto gui = utility::re_component::find<::REComponent>((::REComponent*)go->transform, "via.gui.GUI");
+        if (gui == nullptr) {
+            return nullptr;
+        }
+        return sdk::call_object_func<REManagedObject*>((REManagedObject*)gui, "get_View", ctx, (REManagedObject*)gui);
+    }
+
+    // Build 61: a subtitle is on screen when one of the subtitle GUI's line panels (main/layout/subtitle0, subtitle1,
+    // caption0, caption1 in ui2010Gui) is visible; idle, all four are hidden (layout dumps of Builds 58-59). Builds 58-60
+    // looked for a visible text with a message and never found one. That text check stays as a second signal (and the
+    // only one for a GUI without those panels). While shown, with the HUD panels on, the subtitles are held at their
+    // monitor spot (main/layout at 960, 930): the game places walk-and-talk lines next to the speaker, which put them
+    // outside their capture area. Main thread, before PrerenderGUI; the game sets the position again each update.
+    static inline const std::array<const wchar_t*, 4> SUB_PANELS{L"main/layout/subtitle0", L"main/layout/subtitle1",
+                                                                  L"main/layout/caption0", L"main/layout/caption1"};
+
+    static void subtitles(REManagedObject* view, const pragmatavr::HudTune& tune, int64_t now, sdk::VMContext* ctx) {
+        int panels_found = 0;
+        std::string which{};
+        for (const auto* p : SUB_PANELS) {
+            auto node = get_object(view, p, ctx);
+            if (node == nullptr) {
+                continue;
+            }
+            ++panels_found;
+            if (sdk::call_object_func<bool>(node, "get_Visible", ctx, node)) {
+                which += which.empty() ? "" : ",";
+                which += utility::narrow(std::wstring{p}.substr(12));
+            }
+        }
         int nodes = 0;
         int texts = 0;
         std::string sample{};
-        const bool shown = find_text(view, 0, true, nodes, texts, sample, ctx);
-        // Build 59: Build 58 only counted texts under visible panels, found none while no subtitle showed, and then used
-        // the area all the time (it cut holes in menus). Now every text is counted and a failed check means "not shown".
-        if (texts == 0) {
-            log_once("ui0400 no text"_fnv, fmt::format("ui0400Gui: no via.gui.Text found ({} nodes), subtitle area not used", nodes));
-        }
+        const bool text_shown = find_text(view, 0, true, nodes, texts, sample, ctx);
+        const bool shown = !which.empty() || text_shown;
+        log_once("subtitle setup"_fnv, fmt::format("subtitles: {} has {} of the 4 line panels and {} text pieces ({} nodes)",
+                                                   tune.subtitle_gui, panels_found, texts, nodes));
+
+        auto layout = get_object(view, L"main/layout", ctx);
+        const auto lpos = layout != nullptr ? sdk::call_object_func_easy<Vector4f>(layout, "get_Position") : Vector4f{};
+
         if (pragmatavr::g_subtitles_shown.exchange(shown, std::memory_order_relaxed) != shown) {
             static int changes = 0;
-            if (++changes <= 40) {
-                spdlog::info("[PragmataVR] Subtitles: {} ({} text pieces, {} nodes){}{}", shown ? "shown" : "hidden", texts, nodes,
-                             sample.empty() ? "" : ": ", sample.substr(0, 80));
+            if (++changes <= 60) {
+                spdlog::info("[PragmataVR] Subtitles: {} (panels [{}], text {}{}{}) layout at ({:.0f}, {:.0f})", shown ? "shown" : "hidden",
+                             which, text_shown ? 1 : 0, sample.empty() ? "" : ": ", sample.substr(0, 60), lpos.x, lpos.y);
+            }
+        }
+
+        if (shown && tune.subtitle_pin && tune.hud_panel && layout != nullptr) {
+            constexpr float AX = 960.0f;
+            constexpr float AY = 930.0f;
+            if (std::fabs(lpos.x - AX) > 0.5f || std::fabs(lpos.y - AY) > 0.5f) {
+                static int64_t last_log = 0;
+                static int logs = 0;
+                if (logs < 30 && now - last_log > 1000) {
+                    last_log = now;
+                    ++logs;
+                    auto s0 = get_object(view, L"main/layout/subtitle0", ctx);
+                    const auto p0 = s0 != nullptr ? sdk::call_object_func_easy<Vector4f>(s0, "get_Position") : Vector4f{};
+                    spdlog::info("[PragmataVR] Subtitles: held at ({:.0f}, {:.0f}), the game had them at ({:.0f}, {:.0f}); subtitle0 at ({:.0f}, {:.0f})",
+                                 AX, AY, lpos.x, lpos.y, p0.x, p0.y);
+                }
+                Vector3f np{AX, AY, lpos.z};
+                sdk::call_object_func<void*>(layout, "set_Position", ctx, layout, &np);
             }
         }
     }
@@ -390,24 +525,29 @@ private:
         return found;
     }
 
-    // Build 56: the replicator panel (main/layout/offset/blur/ui2093) shown = visible with some alpha, here and in its
-    // layout child. Read only.
+    // Build 56: the replicator panel (main/layout/offset/blur/ui2093). Build 56's check (ui2093 visible with alpha) said
+    // "shown" everywhere, so the big area (720 px tall, reaching into the view) was always cut and caught button prompts.
+    // Build 61: shown = the window's frosted backing (ui2093/layout/bg/blur, a BlurFilter that is hidden while the window
+    // is closed in the layout dumps) is visible. A missing piece means "not shown" (the small field area). The other
+    // candidate signals are logged with every change, to correct the choice from one log. ini items_area overrides it.
     static void items_hub(REManagedObject* view, sdk::VMContext* ctx) {
+        const auto vis_of = [&](const wchar_t* path) -> int {
+            auto n = get_object(view, path, ctx);
+            return n == nullptr ? -1 : (sdk::call_object_func<bool>(n, "get_Visible", ctx, n) ? 1 : 0);
+        };
         auto panel = get_object(view, L"main/layout/offset/blur/ui2093", ctx);
-        if (panel == nullptr) {
-            log_once("ui2093 missing"_fnv, "ui2120Gui: replicator panel ui2093 not found, item pickups keep the full area");
-            pragmatavr::g_items_hub.store(true, std::memory_order_relaxed);
-            return;
-        }
-        const bool vis = sdk::call_object_func<bool>(panel, "get_Visible", ctx, panel);
-        const auto c = sdk::call_object_func_easy<Vector4f>(panel, "get_ColorScale");
-        auto lay = get_object(panel, L"layout", ctx);
-        const bool lvis = lay == nullptr || sdk::call_object_func<bool>(lay, "get_Visible", ctx, lay);
-        const auto lc = lay != nullptr ? sdk::call_object_func_easy<Vector4f>(lay, "get_ColorScale") : Vector4f{1.0f, 1.0f, 1.0f, 1.0f};
-        const bool shown = vis && lvis && std::isfinite(c.w) && c.w > 0.05f && std::isfinite(lc.w) && lc.w > 0.05f;
+        const float alpha = panel != nullptr ? sdk::call_object_func_easy<Vector4f>(panel, "get_ColorScale").w : -1.0f;
+        const int backing = vis_of(L"main/layout/offset/blur/ui2093/layout/bg/blur");
+        const int blur_root = vis_of(L"main/layout/offset/blur");
+        const int list = vis_of(L"main/layout/offset/blur/ui2076/layout/offset");
+        const int summary = vis_of(L"main/layout/offset/blur/ui2092/layout/ItemSummary");
+        const bool shown = backing == 1 && blur_root == 1;
         if (pragmatavr::g_items_hub.exchange(shown, std::memory_order_relaxed) != shown) {
-            spdlog::info("[PragmataVR] Item pickups: replicator panel {} (visible {} alpha {:.2f}, layout visible {} alpha {:.2f})",
-                         shown ? "shown, full area" : "hidden, field area", vis, c.w, lvis, lc.w);
+            static int changes = 0;
+            if (++changes <= 60) {
+                spdlog::info("[PragmataVR] Item pickups: replicator {} (window backing {}, panel alpha {:.2f}, blur root {}, list {}, summary {})",
+                             shown ? "open, big area" : "closed, field area", backing, alpha, blur_root, list, summary);
+            }
         }
     }
 

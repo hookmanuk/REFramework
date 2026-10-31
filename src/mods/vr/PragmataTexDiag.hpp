@@ -65,9 +65,13 @@ inline bool contains_ci(std::wstring_view s, std::wstring_view what) {
     return false;
 }
 
+// Build 61: path logging done (Build 58 showed base files natives/STM/<path>.tex.<ver> and streaming files
+// natives/STM/streaming/<path>.tex.<ver>); off, so the loader threads do no extra work.
+inline constexpr bool PATH_LOG = false;
+
 // Loader threads. Cheap when the path is not a texture.
 inline void note(std::wstring_view path, int source) {
-    if (path.empty() || source < 0 || source >= SourceCount || !contains_ci(path, L".tex")) {
+    if (!PATH_LOG || path.empty() || source < 0 || source >= SourceCount || !contains_ci(path, L".tex")) {
         return;
     }
     const int streaming = contains_ci(path, L"streaming") ? 1 : 0;
@@ -359,7 +363,7 @@ inline void tick() {
         dumped = true;
         dump_types();
     }
-    if (now - last_report >= 60000) {
+    if (PATH_LOG && now - last_report >= 60000) {
         last_report = now;
         spdlog::info("[PragmataVR] Texture paths, last 60 s: pak lookup base {} streaming {}, resource base {} streaming {}",
                      g_counts[SourcePathHash][0].exchange(0), g_counts[SourcePathHash][1].exchange(0),

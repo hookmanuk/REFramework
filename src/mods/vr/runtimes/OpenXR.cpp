@@ -1632,7 +1632,7 @@ XrResult OpenXR::end_frame() {
     XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     XrCompositionLayerQuad menu_layer{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hud_layer{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    std::array<XrCompositionLayerQuad, 8> hud_element_layers{}; // PragmataVR Build 56 (7 HUD elements at most)
+    std::array<XrCompositionLayerQuad, 12> hud_element_layers{}; // PragmataVR Build 56. Build 61: 8 elements now (subtitles, reticle)
 
     // we CANT push the layers every time, it cause some layer error
     // in xrEndFrame, so we must only do it when shouldRender is true
@@ -1666,7 +1666,7 @@ XrResult OpenXR::end_frame() {
                 auto& l = hud_element_layers[i];
                 l = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
                 l.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-                l.space = hud_space;
+                l.space = (e.view_space && this->view_space != XR_NULL_HANDLE) ? this->view_space : hud_space;
                 l.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
                 l.subImage.swapchain = hq.swapchain;
                 l.subImage.imageRect = e.rect;

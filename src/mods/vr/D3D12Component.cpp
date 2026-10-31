@@ -809,6 +809,7 @@ void pragmata_update_hud_quad(runtimes::OpenXR* openxr) {
     // circle and enemy markers stay in the eyes only. Show element boxes adds a cyan outline around each area.
     std::vector<D3D12_RECT> element_rects{};
     std::vector<std::array<float, 4>> element_display{};
+    std::vector<int> element_groups{}; // Build 61
     if (pragmata_ensure_comp(p)) {
         std::vector<D3D12_RECT> rects{};
         std::vector<int> groups{};
@@ -853,6 +854,7 @@ void pragmata_update_hud_quad(runtimes::OpenXR* openxr) {
         }
         element_rects = rects;
         element_display = display;
+        element_groups = groups;
         std::scoped_lock _{cmds.mtx};
         auto cl = cmds.cmd_list.Get();
         const auto tr = [&](ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES b) {
@@ -974,14 +976,36 @@ void pragmata_update_hud_quad(runtimes::OpenXR* openxr) {
         if (x1 <= x0 + 1 || y1 <= y0 + 1 || dsp[2] <= 1.0f || dsp[3] <= 1.0f) {
             continue;
         }
-        const glm::vec3 local{(dsp[0] - (float)p.src_w * 0.5f) * mpp, ((float)p.src_h * 0.5f - dsp[1]) * mpp, 0.0f};
-        const glm::vec3 pos = placement.position + prot * local;
         runtimes::OpenXR::HudElementQuad e{};
         e.rect.offset = XrOffset2Di{(int32_t)x0, (int32_t)y0};
         e.rect.extent = XrExtent2Di{(int32_t)(x1 - x0), (int32_t)(y1 - y0)};
-        e.pose.orientation = hq.pose.orientation;
-        e.pose.position = XrVector3f{pos.x, pos.y, pos.z};
-        e.size = XrExtent2Df{dsp[2] * mpp, dsp[3] * mpp};
+        const int eg = i < element_groups.size() ? element_groups[i] : -1;
+        if (eg == pragmatavr::GroupReticle) {
+            // Build 61: the gun reticle is shown where it would have been: its area of the game canvas (the canvas centre
+            // straight ahead, like REFramework's own 2D UI sheet), on a plane Distance meters in front of the eyes in view
+            // space, at the angular scale of the HUD panel (Panel size across the image width), times its Size.
+            const float sw = (float)p.src_w;
+            const float sh = (float)p.src_h;
+            const float s = (std::min)(sw / 1920.0f, sh / 1080.0f);
+            const float ox = (sw - 1920.0f * s) * 0.5f;
+            const float oy = (sh - 1080.0f * s) * 0.5f;
+            const auto& nb = pragmatavr::FLAT_BOXES[pragmatavr::GroupReticle];
+            const float ncx = ox + s * (nb[0] + nb[2]) * 0.5f;
+            const float ncy = oy + s * (nb[1] + nb[3]) * 0.5f;
+            const float dist = tune->screen[pragmatavr::ScreenReticleDist];
+            const float k = (std::max)(0.05f, tune->flat_groups[pragmatavr::GroupReticle].size);
+            const float mpp_r = sw > 0.0f ? 2.0f * dist * std::tan(glm::radians(tune->screen[pragmatavr::ScreenWidth]) * 0.5f) / sw : 0.0f;
+            e.view_space = true;
+            e.pose.orientation = XrQuaternionf{0.0f, 0.0f, 0.0f, 1.0f};
+            e.pose.position = XrVector3f{(ncx - sw * 0.5f) * mpp_r, (sh * 0.5f - ncy) * mpp_r, -dist};
+            e.size = XrExtent2Df{(float)(x1 - x0) * mpp_r * k, (float)(y1 - y0) * mpp_r * k};
+        } else {
+            const glm::vec3 local{(dsp[0] - (float)p.src_w * 0.5f) * mpp, ((float)p.src_h * 0.5f - dsp[1]) * mpp, 0.0f};
+            const glm::vec3 pos = placement.position + prot * local;
+            e.pose.orientation = hq.pose.orientation;
+            e.pose.position = XrVector3f{pos.x, pos.y, pos.z};
+            e.size = XrExtent2Df{dsp[2] * mpp, dsp[3] * mpp};
+        }
         openxr->hud_elements.push_back(e);
     }
     hq.visible = true;
@@ -1096,6 +1120,17 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 if (desc != last_desc) {
                     last_desc = desc;
                     spdlog::info("[PragmataVR] ANCHORED areas in the {} x {} UI buffer:{}", d.Width, d.Height, desc);
+                }
+                // Build 61: capture area audit, once per UI buffer size (and again when the item pickups area switches).
+                {
+                    static uint64_t last_key = 0;
+                    const uint64_t key = ((uint64_t)d.Width << 32) ^ ((uint64_t)d.Height << 2) ^ (pragmatavr::g_items_hub.load() ? 1u : 0u) ^
+                                         ((uint64_t)pragmatavr::g_items_area_mode_cache.load() << 1);
+                    if (key != last_key) {
+                        last_key = key;
+                        spdlog::info("[PragmataVR] Capture areas (canvas px; the 1920 x 1080 canvas is the game's 16:9 view):{}",
+                                     pragmatavr::capture_audit(*t, (float)d.Width, (float)d.Height));
+                    }
                 }
                 std::scoped_lock _{pragmata_trace::g_rects_mtx};
                 pragmata_trace::g_rects = std::move(rects);

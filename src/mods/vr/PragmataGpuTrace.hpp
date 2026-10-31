@@ -122,7 +122,7 @@ inline std::atomic<uint64_t> g_fallback_window{0};         // Build 29: copies m
 inline constexpr int SLOT_COUNT = 8;
 inline constexpr int PROBE_ROWS_MAX = 24;
 inline constexpr UINT64 PROBE_BYTES = 2400ull * 1024ull; // Build 58: 1600 -> 2400 KB (subtitles and bigger health / item pickups areas)
-inline constexpr int PROBE_GROUPS = 8;
+inline constexpr int PROBE_GROUPS = 16; // Build 61: 8 -> 16 (the reticle is group 8)
 enum SlotState : int {
     SlotFree = 0,
     SlotPending = 1, // copy recorded, GPU result not known yet
@@ -485,8 +485,9 @@ inline void report_redirects() {
     if (reports < 120) { // two hours
         ++reports;
         spdlog::info("[PragmataVR] Fixed HUD, last 60 s: {} hand-offs ({} not the in-game buffer), {} captured, {} checked ({} blank), "
-            "{} reused before checked, {} with no slot free; panel updates health {}, stamina {}, weapons {}, tutorial {}",
-            ho, skipped, pc, pr, pb, pe, pn, upd[1], upd[2], upd[3], upd[4]);
+            "{} reused before checked, {} with no slot free; panel updates health {}, stamina {}, weapons {}, tutorial {}, "
+            "items {}, objective {}, subtitles {}, reticle {}",
+            ho, skipped, pc, pr, pb, pe, pn, upd[1], upd[2], upd[3], upd[4], upd[5], upd[6], upd[7], upd[8]);
     }
 }
 

@@ -146,6 +146,7 @@ public:
         XrRect2Di rect{};
         XrPosef pose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
         XrExtent2Df size{1.0f, 1.0f};
+        bool view_space{false}; // Build 61: always in view space (the gun reticle), whatever the HUD mode
     };
     std::vector<HudElementQuad> hud_elements{};
     bool hud_head_locked{false}; // Follows Head: the element quads are in view space
