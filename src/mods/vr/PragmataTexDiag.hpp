@@ -26,6 +26,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <reframework/API.hpp> // reframework::InvokeRet (Build 58: needed where the loaders include this header)
 #include "sdk/RETypeDB.hpp"
 #include "sdk/REGlobals.hpp"
 #include "utility/String.hpp"
