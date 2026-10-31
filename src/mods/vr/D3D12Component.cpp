@@ -820,9 +820,39 @@ void pragmata_update_hud_quad(runtimes::OpenXR* openxr) {
             display = g_pragmata_rect_display;
         }
         display.resize(rects.size(), std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+        const auto copies = pragmata_trace::panel_copies(groups);
+        // Build 60: an element that shows up again (after its box was dropped) keeps its old picture in the good texture
+        // until a capture holding it arrives. If none does (the element draws nothing visible, like the tutorial box
+        // flashing in when LT is pressed), the old picture was shown: once a piece of the start-up warning screen. Its
+        // quad is now left out until a fresh capture of it arrives.
+        {
+            static std::array<bool, 32> was_wanted{};
+            static std::array<bool, 32> fresh{};
+            std::array<bool, 32> wanted{};
+            for (const int g : groups) {
+                if (g >= 0 && g < 32) {
+                    wanted[g] = true;
+                    if (!was_wanted[g]) {
+                        fresh[g] = false;
+                    }
+                }
+            }
+            for (const auto& c : copies) {
+                if (c.group >= 0 && c.group < 32) {
+                    fresh[c.group] = true;
+                }
+            }
+            was_wanted = wanted;
+            for (size_t i = 0; i < groups.size() && i < rects.size(); ++i) {
+                const int g = groups[i];
+                if (g >= 0 && g < 32 && !fresh[g]) {
+                    rects[i] = D3D12_RECT{0, 0, 0, 0};
+                    display[i] = std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f};
+                }
+            }
+        }
         element_rects = rects;
         element_display = display;
-        const auto copies = pragmata_trace::panel_copies(groups);
         std::scoped_lock _{cmds.mtx};
         auto cl = cmds.cmd_list.Get();
         const auto tr = [&](ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES b) {

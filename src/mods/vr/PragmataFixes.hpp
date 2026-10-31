@@ -176,7 +176,7 @@ private:
         {"ui3500Gui", "ui3500Gui"_fnv, KindDoor},
         {"ui3510Gui", "ui3510Gui"_fnv, KindDoor},
         {"ui3010Gui", "ui3010Gui"_fnv, KindLabel},
-        {"ui2010Gui", "ui2010Gui"_fnv, KindSubtitle}, // Build 58: subtitles shown? (read only)
+        {"ui0400Gui", "ui0400Gui"_fnv, KindSubtitle}, // Build 58: subtitles shown? (read only). Build 60: ui0400Gui
     }};
 
     // Only elements drawn within this window are looked up (absent HUD screens cost nothing).
@@ -326,7 +326,7 @@ private:
                 subtitles(view, ctx);
             }
             if (tg.hash == "ui2110Gui"_fnv || tg.hash == "ui2120Gui"_fnv || tg.hash == "ui2100Gui"_fnv ||
-                tg.hash == "ui2010Gui"_fnv) { // Build 55: tutorial too. Build 58: subtitles too
+                tg.hash == "ui0400Gui"_fnv) { // Build 55: tutorial too. Build 60: subtitles (ui0400Gui) too
                 maybe_dump(view, tg, now, ctx);
             }
         }
@@ -342,7 +342,7 @@ private:
         // Build 59: Build 58 only counted texts under visible panels, found none while no subtitle showed, and then used
         // the area all the time (it cut holes in menus). Now every text is counted and a failed check means "not shown".
         if (texts == 0) {
-            log_once("ui2010 no text"_fnv, fmt::format("ui2010Gui: no via.gui.Text found ({} nodes), subtitle area not used", nodes));
+            log_once("ui0400 no text"_fnv, fmt::format("ui0400Gui: no via.gui.Text found ({} nodes), subtitle area not used", nodes));
         }
         if (pragmatavr::g_subtitles_shown.exchange(shown, std::memory_order_relaxed) != shown) {
             static int changes = 0;

@@ -77,8 +77,9 @@ enum Group : int {
     GroupTutorial = 4,
     GroupItems = 5, // Build 47: item pickups (ui2120Gui, top right on a monitor: the cubes collected, etc.)
     GroupObjective = 6, // Build 53: objective banner (ui2110Gui, top middle on a monitor: "Restore the power to the lunar base")
-    GroupSubtitles = 7, // v0.9.2 Build 58: subtitles and the Skip Dialogue prompt (ui2010Gui, bottom middle on a monitor)
-    GroupCount = 8,
+    GroupSubtitles = 7, // v0.9.2 Build 58: subtitles. Build 60: ui0400Gui (Build 58 / 59 used ui2010Gui, whose texts never showed)
+    GroupReticle = 8,   // Build 60: gun reticle (ui2001Gui, ui3300Gui): stays in the eyes, only its Eye gap is tuned
+    GroupCount = 9,
 };
 
 enum Field : int {
@@ -89,9 +90,9 @@ enum Field : int {
     FieldCount = 4,
 };
 
-inline constexpr std::array<const char*, GroupCount> GROUP_KEYS{"hack", "health", "stamina", "weapons", "tutorial", "items", "objective", "subtitles"};
-inline constexpr std::array<const char*, GroupCount> GROUP_LABELS{"Hacking circle", "Health", "Stamina", "Weapon wheel", "Tutorial box", "Item pickups", "Objective", "Subtitles"};
-inline constexpr std::array<const char*, GroupCount> GROUP_TITLES{"HACKING CIRCLE", "HEALTH", "STAMINA", "WEAPON WHEEL", "TUTORIAL BOX", "ITEM PICKUPS", "OBJECTIVE", "SUBTITLES"};
+inline constexpr std::array<const char*, GroupCount> GROUP_KEYS{"hack", "health", "stamina", "weapons", "tutorial", "items", "objective", "subtitles", "reticle"};
+inline constexpr std::array<const char*, GroupCount> GROUP_LABELS{"Hacking circle", "Health", "Stamina", "Weapon wheel", "Tutorial box", "Item pickups", "Objective", "Subtitles", "Reticle"};
+inline constexpr std::array<const char*, GroupCount> GROUP_TITLES{"HACKING CIRCLE", "HEALTH", "STAMINA", "WEAPON WHEEL", "TUTORIAL BOX", "ITEM PICKUPS", "OBJECTIVE", "SUBTITLES", "RETICLE"};
 
 // The ini format this build writes. Older files (Build 10 and before) had the hacking circle reset to neutral by the
 // Build 8 fresh ini, so their hack.* values are ignored and the locked values below are used instead.
@@ -125,7 +126,8 @@ inline constexpr std::array<std::array<float, 2>, GroupCount> FLAT_PIVOTS{{
     {305.0f, 300.0f},  // tutorial box
     {1640.0f, 200.0f}, // Build 47: item pickups (estimate, top right; the content extent log measures it)
     {960.0f, 110.0f},  // Build 53: objective banner (estimate, top middle, from the game's Options preview)
-    {960.0f, 930.0f},  // Build 58: subtitles. Build 59: the layout's own anchor (960, 930)
+    {960.0f, 900.0f},  // Build 58: subtitles. Build 60: middle of the bottom band (ui0400Gui, layout to be measured)
+    {960.0f, 540.0f},  // Build 60: reticle (not moved or resized, only shifted per eye)
 }};
 
 // Build 25: each element's area in the game's own layout (canvas pixels, 1920 x 1080, x0 y0 x1 y1), with a margin. From
@@ -152,10 +154,9 @@ inline constexpr std::array<std::array<float, 4>, GroupCount> FLAT_BOXES{{
                                        // right: the hub panel ("Y" stations) and the resource counter, measured in snapshots
     {480.0f, 0.0f, 1440.0f, 360.0f},   // Build 53: objective banner (icon, objective line). Build 56: bottom 260 -> 360 for the
                                        // second and third objective lines (secondaryObjective +102, tertiaryObjective +148)
-    {560.0f, 700.0f, 1360.0f, 975.0f}, // Build 59: subtitles, from the ui2010Gui layout dump: lines centered on 960, 930
-                                       // (text region 650 wide), up to two speakers, names 80 above and captions up to 168
-                                       // above. The Skip Dialogue prompt (right of 1370) belongs to another GUI and stays out.
-                                       // (Build 58 guessed 160,700-1760,1000.)
+    {160.0f, 700.0f, 1760.0f, 1080.0f}, // Build 60: subtitles (ui0400Gui): a wide bottom band until its layout dump is
+                                        // read (Build 59 used the ui2010Gui layout, the wrong GUI). Only cut while a line shows.
+    {0.0f, 0.0f, 0.0f, 0.0f},           // Build 60: reticle (stays in the eyes)
 }};
 
 // Build 56: item pickups away from the hub: only the resource counter and the pickup notices (the replicator panel,
@@ -163,7 +164,7 @@ inline constexpr std::array<std::array<float, 4>, GroupCount> FLAT_BOXES{{
 inline constexpr std::array<float, 4> ITEMS_BOX_FIELD{1150.0f, 0.0f, 1940.0f, 380.0f};
 // Build 56: set on the main thread (PragmataFixes) while the item pickups' replicator panel is shown.
 inline std::atomic<bool> g_items_hub{true};
-// Build 58: set on the main thread (PragmataFixes) while ui2010Gui shows subtitle text. ui2010Gui is drawn all the time,
+// Build 58: set on the main thread (PragmataFixes) while ui0400Gui (Build 60) shows subtitle text. It is drawn all the time,
 // so its (large, low in the view) area is only cut out of the eyes while a line is actually on screen.
 inline std::atomic<bool> g_subtitles_shown{true};
 
@@ -203,12 +204,12 @@ struct HudTune {
     bool log_elements{true};
     bool hack_locked{true}; // Build 25: kept for old ini files; the locks are now per element (locked[])
     // Build 25: per-element lock. While locked, the menu cannot change that element's values in any HUD mode.
-    std::array<bool, GroupCount> locked{true, true, true, true, true, true, true, false}; // Build 58: subtitles start unlocked // v0.9.0: all locked at Steve's Quest 3 tuning
+    std::array<bool, GroupCount> locked{true, true, true, true, true, true, true, false, false}; // Build 58 / 60: subtitles and reticle start unlocked // v0.9.0: all locked at Steve's Quest 3 tuning
     // Build 25: mod menu sections that are collapsed (bit per MenuSection). DEVELOPER starts collapsed.
     // Build 58: a fresh install starts with every HUD element section collapsed (a less overwhelming first look); VIEW,
     // PERFORMANCE and the plain headers stay open. Existing ini files keep their own collapsed value.
     uint32_t collapsed{(1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 8) | (1u << 9) |
-                       (1u << 10) | (1u << 11) | (1u << 12)};
+                       (1u << 10) | (1u << 11) | (1u << 12) | (1u << 13)};
     // Build 25: ANCHORED test aid, outlines of the areas moved to the room-fixed panel.
     bool show_boxes{false};
     // Build 55: draw in NATIVE while a full-screen menu (ui51xx: Firmware Updater, Stamp Club, Bot Database, outfits,
@@ -410,7 +411,10 @@ inline int group_for(std::string_view name) {
     if (name == "ui2100Gui" || name == "ui2002_00Gui") return GroupTutorial;
     if (name == "ui2120Gui") return GroupItems; // Build 47: item pickups (HUD Controls calls it "Inventory Items")
     if (name == "ui2110Gui") return GroupObjective; // Build 53: objective banner (HUD Controls calls it "Objective Message")
-    if (name == "ui2010Gui") return GroupSubtitles; // Build 58: subtitles (AFW warped them on REFramework's sheet)
+    // Build 60: the subtitles seen in conversations are ui0400Gui (ui2010Gui, used in Builds 58 / 59, never showed text).
+    if (name == "ui0400Gui") return GroupSubtitles;
+    // Build 60: the gun reticle (both aiming snapshot series drew ui2001Gui; the second gun also ui3300Gui).
+    if (name == "ui2001Gui" || name == "ui3300Gui") return GroupReticle;
     return -1;
 }
 
@@ -537,12 +541,14 @@ enum MenuSection : int {
     SectionDamage = 10,     // Build 51: DAMAGE NUMBERS (bit 8 is now ENEMY HEALTH BARS)
     SectionObjective = 11,  // Build 53: OBJECTIVE
     SectionSubtitles = 12,  // Build 58: SUBTITLES
+    SectionReticle = 13,    // Build 60: RETICLE
 };
 
 inline int section_for_group(int g) {
     if (g == GroupItems) return SectionItems;
     if (g == GroupObjective) return SectionObjective;
     if (g == GroupSubtitles) return SectionSubtitles;
+    if (g == GroupReticle) return SectionReticle;
     return SectionElement0 + g;
 }
 
@@ -1111,6 +1117,13 @@ private:
         add_element(GroupTutorial);
         add_element(GroupObjective); // Build 53
         add_element(GroupSubtitles); // Build 58
+        // Build 60: the reticle stays where the gun points; only its depth (Eye gap) is tuned.
+        add_section(section_for_group(GroupReticle), GROUP_TITLES[GroupReticle]);
+        m_rows.back().group = GroupReticle;
+        add_row(MenuRow::Kind::Toggle, GroupReticle, -1, ActionToggleHackLock, "Lock", "A = lock or unlock this element (locked = its values cannot change)");
+        add_row(MenuRow::Kind::Value, GroupReticle, FieldGap, ActionNone, "Eye gap",
+            "A = edit the gap between the eyes for the gun reticle. Higher = closer to you, lower = further away");
+        add_row(MenuRow::Kind::Action, GroupReticle, -1, ActionResetGroup, "Reset to defaults", "A = back to the starting values (blocked while locked)");
 
         // ==== ADVANCED ====
         tab = TabAdvanced;
@@ -1291,7 +1304,7 @@ private:
         s += fmt::format("log_elements={}\n", t.log_elements ? 1 : 0);
         s += "# collapsed: mod menu sections that are collapsed (sum of: 1 VIEW, 2 DEVELOPER, 4 hack, 8 health, 16 stamina, 32 weapons, 64 tutorial,\n";
         s += "#   128 PERFORMANCE, 256 ENEMY HEALTH BARS, 512 ITEM PICKUPS, 1024 DAMAGE NUMBERS,\n";
-        s += "#   2048 OBJECTIVE, 4096 SUBTITLES).\n";
+        s += "#   2048 OBJECTIVE, 4096 SUBTITLES, 8192 RETICLE).\n";
         s += fmt::format("collapsed={}\n", t.collapsed);
         s += fmt::format("show_boxes={}\n", t.show_boxes ? 1 : 0);
         s += "# menu_native: 1 = NATIVE while a full-screen menu is open (Build 55). hide_low_health: 1 = no red screen\n";
@@ -2304,7 +2317,7 @@ private:
     static constexpr float SIZE_STEP_BIG = 1.20f;
     static constexpr float MIN_SIZE = 0.2f;
     static constexpr float MAX_SIZE = 8.0f;
-    static constexpr float MOVE_STEP = 10.0f;
+    static constexpr float MOVE_STEP = 5.0f; // Build 60: 10 -> 5 (Steve: finer Left / right and Up / down steps)
     static constexpr float MOVE_STEP_BIG = 50.0f;
     static constexpr float MAX_MOVE = 4000.0f;
     static constexpr float GAP_STEP = 1.0f;

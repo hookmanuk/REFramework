@@ -3731,7 +3731,7 @@ void VR::on_frame() {
     const float title_spacing = title_size * 0.14f;
     const float tier_spacing = tier_size * 0.14f;
     const float title_w = spaced(bold, title_size, 0, 0, 0, "PRAGMATA VR", title_spacing, false) + fs * 0.6f +
-        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B59");
+        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B60");
 
     // Build 36: the tab bar (LT, the four tab titles, RT) replaces the two band titles.
     const float tab_gap = std::round(fs * 1.6f);
@@ -3824,7 +3824,7 @@ void VR::on_frame() {
     {
         const float tx = left + spaced(bold, title_size, left, y, TEXT_BRIGHT, "PRAGMATA VR", title_spacing, true) + fs * 0.6f;
         spaced(bold, title_size, tx, y, ACCENT, "MOD MENU", title_spacing, true);
-        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B59"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B59");
+        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B60"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B60");
 
         const float ly = std::floor(y + title_size * 1.25f + fs * 0.25f);
         dl->AddLine(ImVec2{left, ly}, ImVec2{right, ly}, ACCENT_FAINT, 1.0f);
@@ -4847,7 +4847,8 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                     const auto& gt = pragmatavr::active_group(*ftune, fgroup); // Build 38: hack uses its headset values when set
                     // Build 25: ANCHORED takes depth from the panel distance, so the anchored elements get no eye gap
                     // (the UI buffer is shared by both eyes, so it must match in both).
-                    const bool anchored = ftune->hud_panel && fgroup != pragmatavr::GroupHack;
+                    // Build 60: the reticle stays in the eyes like the hacking circle (only its eye gap is applied).
+                    const bool anchored = ftune->hud_panel && fgroup != pragmatavr::GroupHack && fgroup != pragmatavr::GroupReticle;
                     const float eye_shift = anchored ? 0.0f : (is_left_eye() ? gt.gap : -gt.gap);
                     // Build 38: Fixed mode draws the element at its own place (size only); the panel applies Left / right and
                     // Up / down (AnchoredBox ox / oy), so the cut-out area stays at the screen edge.
@@ -4862,7 +4863,8 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                     const bool hide_blur = ftune->hide_blur;
                     // Build 24: the 3D panel (not the hacking circle) drawn as a Screen view, like its companion.
                     const auto fvt = fview != nullptr ? sdk::call_object_func<uint32_t>(fview, "get_ViewType", context, fview) : 0u;
-                    const bool to_screen = fnative && fgroup != pragmatavr::GroupHack && (ftune->flat_screen || ftune->hud_panel) &&
+                    const bool to_screen = fnative && fgroup != pragmatavr::GroupHack && fgroup != pragmatavr::GroupReticle &&
+                                           (ftune->flat_screen || ftune->hud_panel) &&
                                            fview != nullptr && fvt != (uint32_t)via::gui::ViewType::Screen;
                     const bool screen_drawn = to_screen || (fview != nullptr && fvt == (uint32_t)via::gui::ViewType::Screen);
 
