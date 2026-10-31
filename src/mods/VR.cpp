@@ -3462,6 +3462,10 @@ PragmataRowView pragmata_row_view(const pragmatavr::HudTune& t, const pragmatavr
             v.value_color = t.show_boxes ? AMBER : ACCENT;
             v.dim = !t.hud_panel; // ANCHORED only
             break;
+        case pragmatavr::ActionToggleSharpTextures:
+            v.value = t.sharp_textures ? "ON" : "OFF";
+            v.value_color = ACCENT;
+            break;
         case pragmatavr::ActionToggleLowHealth:
             v.value = t.hide_low_health ? "HIDDEN" : "SHOWN";
             v.value_color = t.hide_low_health ? ACCENT : AMBER;
@@ -3727,7 +3731,7 @@ void VR::on_frame() {
     const float title_spacing = title_size * 0.14f;
     const float tier_spacing = tier_size * 0.14f;
     const float title_w = spaced(bold, title_size, 0, 0, 0, "PRAGMATA VR", title_spacing, false) + fs * 0.6f +
-        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B58");
+        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B59");
 
     // Build 36: the tab bar (LT, the four tab titles, RT) replaces the two band titles.
     const float tab_gap = std::round(fs * 1.6f);
@@ -3820,7 +3824,7 @@ void VR::on_frame() {
     {
         const float tx = left + spaced(bold, title_size, left, y, TEXT_BRIGHT, "PRAGMATA VR", title_spacing, true) + fs * 0.6f;
         spaced(bold, title_size, tx, y, ACCENT, "MOD MENU", title_spacing, true);
-        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B58"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B58");
+        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B59"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B59");
 
         const float ly = std::floor(y + title_size * 1.25f + fs * 0.25f);
         dl->AddLine(ImVec2{left, ly}, ImVec2{right, ly}, ACCENT_FAINT, 1.0f);

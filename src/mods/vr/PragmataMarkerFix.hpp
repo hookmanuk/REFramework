@@ -165,6 +165,18 @@ inline void install() {
                 tx = tune->enemy_bar[pragmatavr::EnemyX];
                 ty = tune->enemy_bar[pragmatavr::EnemyY];
             }
+            // Build 59: the subtitles (ui2010Gui) are placed under the speaker in the world by this same function, so
+            // they moved around and never sat inside their capture area. While Fixed / Follows Head show them on their
+            // own quad, pin them to the layout's monitor anchor (bottom middle, 960 x 930 on a 1920 x 1080 canvas).
+            if (tl_owner_hash == "ui2010Gui"_fnv && tune->enabled && tune->hud_panel) {
+                r[0] = w * 0.5f;
+                r[1] = h * (930.0f / 1080.0f);
+                static std::atomic<int> sub_logged{0};
+                if (sub_logged.fetch_add(1) < 3) {
+                    spdlog::info("[PragmataVR] Marker fix: subtitles pinned to ({:.0f}, {:.0f}) of {:.0f} x {:.0f}", r[0], r[1], w, h);
+                }
+                return;
+            }
             r[0] += dx + tx;
             r[1] += dy + ty;
 

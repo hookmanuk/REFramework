@@ -29,6 +29,7 @@
 #include <reframework/API.hpp> // reframework::InvokeRet (Build 58: needed where the loaders include this header)
 #include "sdk/RETypeDB.hpp"
 #include "sdk/REGlobals.hpp"
+#include "sdk/REContext.hpp"
 #include "utility/String.hpp"
 
 namespace pragmata_tex_diag {
@@ -217,6 +218,131 @@ inline void dump_types() {
 
 inline int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// ==== Build 59: Sharp textures ====
+// via.render.RenderConfig (from via.render.Renderer.get_RenderConfig) has StreamingTextureLoadLevelBias and
+// MinimumStreamingTextureResolution (Build 58 type dump). With the toggle on, the minimum streaming resolution is set to
+// the highest value the enum offers and the load level bias to 0; with it off, the game's own values are put back.
+inline int parse_number(std::string_view n) {
+    int best = -1;
+    int cur = -1;
+    for (char ch : n) {
+        if (ch >= '0' && ch <= '9') {
+            cur = (cur < 0 ? 0 : cur * 10) + (ch - '0');
+            if (cur > 100000) cur = 100000;
+        } else {
+            best = (std::max)(best, cur);
+            cur = -1;
+        }
+    }
+    return (std::max)(best, cur);
+}
+
+inline void sharp_textures(bool on) {
+    static bool failed = false;
+    static bool init = false;
+    static sdk::REMethodDefinition* get_rc = nullptr;
+    static sdk::REMethodDefinition* get_bias = nullptr;
+    static sdk::REMethodDefinition* set_bias = nullptr;
+    static sdk::REMethodDefinition* get_min = nullptr;
+    static sdk::REMethodDefinition* set_min = nullptr;
+    static uint32_t target_min = 0;
+    static bool have_target = false;
+    static bool have_orig = false;
+    static uint32_t orig_bias = 0;
+    static uint32_t orig_min = 0;
+    static bool applied = false;
+    if (failed) {
+        return;
+    }
+    if (!init) {
+        init = true;
+        auto renderer_t = sdk::find_type_definition("via.render.Renderer");
+        auto rc_t = sdk::find_type_definition("via.render.RenderConfig");
+        get_rc = renderer_t != nullptr ? renderer_t->get_method("get_RenderConfig") : nullptr;
+        if (rc_t != nullptr) {
+            get_bias = rc_t->get_method("get_StreamingTextureLoadLevelBias");
+            set_bias = rc_t->get_method("set_StreamingTextureLoadLevelBias");
+            get_min = rc_t->get_method("get_MinimumStreamingTextureResolution");
+            set_min = rc_t->get_method("set_MinimumStreamingTextureResolution");
+        }
+        if (get_rc == nullptr || get_bias == nullptr || set_bias == nullptr || get_min == nullptr || set_min == nullptr) {
+            spdlog::info("[PragmataVR] Sharp textures: render config methods not found, not available");
+            failed = true;
+            return;
+        }
+        // The enum's values: pick the one whose name has the biggest number (a resolution), else the biggest value.
+        std::string list{};
+        int best_num = -1;
+        uint32_t best_val = 0;
+        uint32_t max_val = 0;
+        bool any = false;
+        if (auto et = sdk::find_type_definition("via.render.RenderConfig.MinimumStreamingTextureResoltuion"); et != nullptr) {
+            for (auto f : et->get_fields()) {
+                if (f == nullptr || !f->is_static() || !f->is_literal() || f->get_init_data() == nullptr || f->get_name() == nullptr) {
+                    continue;
+                }
+                const uint32_t v = *(const uint32_t*)f->get_init_data();
+                const std::string_view nm{f->get_name()};
+                list += fmt::format(" {}={}", nm, v);
+                any = true;
+                max_val = (std::max)(max_val, v);
+                const int num = parse_number(nm);
+                if (num > best_num) {
+                    best_num = num;
+                    best_val = v;
+                }
+            }
+        }
+        if (any) {
+            target_min = best_num > 0 ? best_val : max_val;
+            have_target = true;
+        }
+        spdlog::info("[PragmataVR] Sharp textures: minimum resolution values{} -> target {}", list.empty() ? std::string{" (none found)"} : list,
+                     have_target ? std::to_string(target_min) : std::string{"none"});
+    }
+
+    auto renderer = sdk::get_native_singleton<void>("via.render.Renderer");
+    if (renderer == nullptr) {
+        return;
+    }
+    auto ctx = sdk::get_thread_context();
+    auto rc = get_rc->call<::REManagedObject*>(ctx, renderer);
+    if (rc == nullptr) {
+        return;
+    }
+    const uint32_t bias = get_bias->call<uint32_t>(ctx, rc);
+    const uint32_t mn = get_min->call<uint32_t>(ctx, rc);
+    if (!have_orig) {
+        have_orig = true;
+        orig_bias = bias;
+        orig_min = mn;
+        spdlog::info("[PragmataVR] Sharp textures: game values: load level bias {}, minimum resolution {}", bias, mn);
+    }
+    if (on) {
+        bool changed = false;
+        if (bias != 0) {
+            set_bias->call<void*>(ctx, rc, (uint32_t)0);
+            changed = true;
+        }
+        if (have_target && mn != target_min) {
+            set_min->call<void*>(ctx, rc, target_min);
+            changed = true;
+        }
+        if (changed) {
+            applied = true;
+            static int logs = 0;
+            if (++logs <= 10) {
+                spdlog::info("[PragmataVR] Sharp textures: on (bias {} -> 0, minimum resolution {} -> {})", bias, mn, have_target ? target_min : mn);
+            }
+        }
+    } else if (applied) {
+        applied = false;
+        set_bias->call<void*>(ctx, rc, orig_bias);
+        set_min->call<void*>(ctx, rc, orig_min);
+        spdlog::info("[PragmataVR] Sharp textures: off (game values back: bias {}, minimum resolution {})", orig_bias, orig_min);
+    }
 }
 
 // Main thread, every frame (cheap): the one-time type dump after 20 s, and path counts every 60 s.

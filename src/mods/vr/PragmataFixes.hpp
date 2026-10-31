@@ -134,6 +134,15 @@ public:
         apply();
         report_gui_list();
         pragmata_tex_diag::tick(); // Build 58: texture streaming diagnostic (logging only)
+        // Build 59: Sharp textures, checked twice a second (the game may write its own values back on a settings change).
+        {
+            static int64_t last = 0;
+            const auto t = now_ms();
+            if (t - last >= 500) {
+                last = t;
+                pragmata_tex_diag::sharp_textures(pragmatavr::HudTuning::get().tune()->sharp_textures);
+            }
+        }
         pragmata_marker_fix::install(); // Build 50, once
         if (pragmatavr::HudTuning::get().tune()->screen_probe) {
             pragmata_screen_probe::install(); // Build 48, once
@@ -329,10 +338,11 @@ private:
         int nodes = 0;
         int texts = 0;
         std::string sample{};
-        const bool shown_now = find_text(view, 0, nodes, texts, sample, ctx);
-        const bool shown = shown_now || texts == 0;
+        const bool shown = find_text(view, 0, true, nodes, texts, sample, ctx);
+        // Build 59: Build 58 only counted texts under visible panels, found none while no subtitle showed, and then used
+        // the area all the time (it cut holes in menus). Now every text is counted and a failed check means "not shown".
         if (texts == 0) {
-            log_once("ui2010 no text"_fnv, fmt::format("ui2010Gui: no via.gui.Text found ({} nodes), subtitle area always used", nodes));
+            log_once("ui2010 no text"_fnv, fmt::format("ui2010Gui: no via.gui.Text found ({} nodes), subtitle area not used", nodes));
         }
         if (pragmatavr::g_subtitles_shown.exchange(shown, std::memory_order_relaxed) != shown) {
             static int changes = 0;
@@ -343,38 +353,41 @@ private:
         }
     }
 
-    static bool find_text(REManagedObject* o, int depth, int& nodes, int& texts, std::string& sample, sdk::VMContext* ctx) {
+    // Every node is visited (texts under hidden panels are counted too); `shown_chain` = this node's parents are all
+    // visible with some alpha.
+    static bool find_text(REManagedObject* o, int depth, bool shown_chain, int& nodes, int& texts, std::string& sample,
+                          sdk::VMContext* ctx) {
+        bool found = false;
         for (auto c = o; c != nullptr && nodes < 400; ) {
             ++nodes;
-            if (sdk::call_object_func<bool>(c, "get_Visible", ctx, c)) {
+            bool here = shown_chain && sdk::call_object_func<bool>(c, "get_Visible", ctx, c);
+            if (here) {
                 const auto col = sdk::call_object_func_easy<Vector4f>(c, "get_ColorScale");
-                const bool opaque = !std::isfinite(col.w) || col.w > 0.02f;
-                if (opaque) {
-                    if (type_name(c) == "via.gui.Text") {
-                        ++texts;
-                        auto msg = sdk::call_object_func<SystemString*>(c, "get_Message", ctx, c);
-                        const auto m = msg != nullptr ? utility::re_string::get_string(msg) : std::string{};
-                        if (m.find_first_not_of(" \t\r\n") != std::string::npos) {
-                            sample = m;
-                            return true;
-                        }
-                    }
-                    if (depth < 14) {
-                        auto child = sdk::call_object_func<REManagedObject*>(c, "get_Child", ctx, c);
-                        if (child != nullptr && find_text(child, depth + 1, nodes, texts, sample, ctx)) {
-                            return true;
-                        }
+                here = !std::isfinite(col.w) || col.w > 0.02f;
+            }
+            if (type_name(c) == "via.gui.Text") {
+                ++texts;
+                if (here && !found) {
+                    auto msg = sdk::call_object_func<SystemString*>(c, "get_Message", ctx, c);
+                    const auto m = msg != nullptr ? utility::re_string::get_string(msg) : std::string{};
+                    if (m.find_first_not_of(" \t\r\n") != std::string::npos) {
+                        sample = m;
+                        found = true;
                     }
                 }
-            } else if (type_name(c) == "via.gui.Text") {
-                ++texts; // a hidden text still proves the check can see them
+            }
+            if (depth < 14) {
+                auto child = sdk::call_object_func<REManagedObject*>(c, "get_Child", ctx, c);
+                if (child != nullptr && find_text(child, depth + 1, here, nodes, texts, sample, ctx)) {
+                    found = true;
+                }
             }
             if (depth == 0) {
                 break;
             }
             c = sdk::call_object_func<REManagedObject*>(c, "get_Next", ctx, c);
         }
-        return false;
+        return found;
     }
 
     // Build 56: the replicator panel (main/layout/offset/blur/ui2093) shown = visible with some alpha, here and in its

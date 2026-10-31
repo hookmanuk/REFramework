@@ -125,7 +125,7 @@ inline constexpr std::array<std::array<float, 2>, GroupCount> FLAT_PIVOTS{{
     {305.0f, 300.0f},  // tutorial box
     {1640.0f, 200.0f}, // Build 47: item pickups (estimate, top right; the content extent log measures it)
     {960.0f, 110.0f},  // Build 53: objective banner (estimate, top middle, from the game's Options preview)
-    {960.0f, 850.0f},  // Build 58: subtitles (estimate, bottom middle, from where REFramework's sheet showed them)
+    {960.0f, 930.0f},  // Build 58: subtitles. Build 59: the layout's own anchor (960, 930)
 }};
 
 // Build 25: each element's area in the game's own layout (canvas pixels, 1920 x 1080, x0 y0 x1 y1), with a margin. From
@@ -152,8 +152,10 @@ inline constexpr std::array<std::array<float, 4>, GroupCount> FLAT_BOXES{{
                                        // right: the hub panel ("Y" stations) and the resource counter, measured in snapshots
     {480.0f, 0.0f, 1440.0f, 360.0f},   // Build 53: objective banner (icon, objective line). Build 56: bottom 260 -> 360 for the
                                        // second and third objective lines (secondaryObjective +102, tertiaryObjective +148)
-    {160.0f, 700.0f, 1760.0f, 1000.0f}, // Build 58: subtitles (speaker name, up to about three lines, and the Skip Dialogue
-                                        // prompt to the right). Estimated from REFramework's sheet in snapshots 1793454882/889.
+    {560.0f, 700.0f, 1360.0f, 975.0f}, // Build 59: subtitles, from the ui2010Gui layout dump: lines centered on 960, 930
+                                       // (text region 650 wide), up to two speakers, names 80 above and captions up to 168
+                                       // above. The Skip Dialogue prompt (right of 1370) belongs to another GUI and stays out.
+                                       // (Build 58 guessed 160,700-1760,1000.)
 }};
 
 // Build 56: item pickups away from the hub: only the resource counter and the pickup notices (the replicator panel,
@@ -214,6 +216,9 @@ struct HudTune {
     bool menu_native{true};
     // Build 57: hide the red low health effect at the screen edges (ui2030Gui), made for a flat monitor.
     bool hide_low_health{true};
+    // Build 59: sharp textures in VR. The game's own render config is asked for the highest minimum streaming texture
+    // resolution and no load level bias (PragmataTexDiag.hpp), so textures do not stay at low detail in the headset.
+    bool sharp_textures{true};
     bool hud_fixed{true};    // HUD fixed in the room (Build 12, Steve's standing preference). Off = follows the head
     bool lock_invert{false}; // flips the fixed-HUD correction if it turns out mirrored on some runtime
     bool hide_ghost{true};   // hide Pragmata's offset "aberration" layers (zz_pragmatavr_hide_ghost.lua reads this)
@@ -642,6 +647,7 @@ enum MenuAction : int {
     ActionToggleShiftDamage,    // Build 43
     ActionToggleMenuNative,     // Build 55
     ActionToggleLowHealth,      // Build 57
+    ActionToggleSharpTextures,  // Build 59
 };
 
 class HudTuning {
@@ -1119,6 +1125,8 @@ private:
             "A = Headset (hacking circle, reticle, enemy markers line up on any headset) or Flat (the old monitor projection)");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleLowHealth, "Low health edges",
             "A = hide or show the red effect at the screen edges when health is low (made for a flat monitor)");
+        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleSharpTextures, "Sharp textures",
+            "A = On: the game keeps high resolution textures loaded in VR (uses more VRAM). Off: the game's own choice");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleMenuNative, "Native in menus",
             "A = On: full-screen menus (Firmware Updater, terminals...) draw in NATIVE while open, no AFW trails. Off: keep AFW");
         column = 1;
@@ -1289,6 +1297,8 @@ private:
         s += "# menu_native: 1 = NATIVE while a full-screen menu is open (Build 55). hide_low_health: 1 = no red screen\n";
         s += "#   edges at low health (Build 57).\n";
         s += fmt::format("hide_low_health={}\n", t.hide_low_health ? 1 : 0);
+        s += "# sharp_textures: 1 = keep high resolution textures loaded in VR (Build 59).\n";
+        s += fmt::format("sharp_textures={}\n", t.sharp_textures ? 1 : 0);
         s += fmt::format("menu_native={}\n", t.menu_native ? 1 : 0);
         s += fmt::format("hud_fixed={}\n", t.hud_fixed ? 1 : 0);
         s += fmt::format("lock_invert={}\n", t.lock_invert ? 1 : 0);
@@ -1500,6 +1510,7 @@ private:
                 else if (key == "show_boxes") t->show_boxes = val != 0.0f;
                 else if (key == "menu_native") t->menu_native = val != 0.0f;
                 else if (key == "hide_low_health") t->hide_low_health = val != 0.0f;
+                else if (key == "sharp_textures") t->sharp_textures = val != 0.0f;
                 else if (key == "hud_fixed") t->hud_fixed = val != 0.0f;
                 else if (key == "lock_invert") t->lock_invert = val != 0.0f;
                 else if (key == "hide_ghost") t->hide_ghost = val != 0.0f;
@@ -1996,6 +2007,11 @@ private:
                     t->enemy_locked = !t->enemy_locked;
                     commit(t);
                     spdlog::info("[PragmataVR] Menu: enemy health bars {}", t->enemy_locked ? "locked" : "unlocked");
+                    play_click(true);
+                } else if (row.action == ActionToggleSharpTextures) {
+                    t->sharp_textures = !t->sharp_textures;
+                    commit(t);
+                    spdlog::info("[PragmataVR] Menu: sharp textures {}", t->sharp_textures ? "on" : "off");
                     play_click(true);
                 } else if (row.action == ActionToggleLowHealth) {
                     t->hide_low_health = !t->hide_low_health;
