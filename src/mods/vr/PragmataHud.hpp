@@ -914,6 +914,10 @@ public:
     // eye's actual pose, so they stay put when the head turns, tilts or moves.
     std::atomic<bool> recenter_requested{false};
     std::atomic<bool> reload_textures_requested{false}; // Build 62: PragmataFixes runs it on the main thread
+    // Build 64: shown on the Reload textures row: RELOADING while sent, then DONE (or FAILED) for a few seconds.
+    enum ReloadState : int { ReloadIdle = 0, ReloadSent = 1, ReloadDone = 2, ReloadFailed = 3 };
+    std::atomic<int> reload_textures_state{ReloadIdle};
+    std::atomic<int64_t> reload_textures_ms{0};
     std::atomic<bool> view_recenter_requested{false}; // Build 40: VR::on_present recenters the view (rotation and standing origin)
     std::atomic<int> companion_generation{0}; // bumped when the companion mode changes (re-logs their setup)
     std::atomic<bool> recenter_if_far{false};
@@ -2147,10 +2151,6 @@ private:
                     commit(t);
                     spdlog::info("[PragmataVR] Menu: subtitles {}", t->subtitles_new ? "new" : "original");
                     play_click(true);
-                } else if (row.action == ActionReloadTextures) {
-                    reload_textures_requested = true;
-                    spdlog::info("[PragmataVR] Menu: reload textures requested");
-                    play_click(true);
                 } else if (row.action == ActionToggleReticleMode) {
                     t->reticle_new = !t->reticle_new;
                     commit(t);
@@ -2260,6 +2260,15 @@ private:
                 }
                 return;
             case MenuRow::Kind::Action:
+                // Build 64: Reload textures was handled with the toggles in Builds 62-63, so A on it did nothing.
+                if (row.action == ActionReloadTextures) {
+                    reload_textures_state.store(ReloadSent);
+                    reload_textures_ms.store(now_ms_steady());
+                    reload_textures_requested = true;
+                    spdlog::info("[PragmataVR] Menu: reload textures requested");
+                    play_click(true);
+                    return;
+                }
                 if (row.action == ActionResetMenu) {
                     const auto inverts = t->menu_invert;
                     const float volume = t->menu[MenuClickVolume];

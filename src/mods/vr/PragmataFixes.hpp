@@ -152,8 +152,12 @@ public:
             }
             // Build 62: developer test, and the state 5 s after it.
             static int64_t reload_at = 0;
-            if (pragmatavr::HudTuning::get().reload_textures_requested.exchange(false)) {
-                pragmata_tex_diag::reload_textures();
+            auto& hud = pragmatavr::HudTuning::get();
+            if (hud.reload_textures_requested.exchange(false)) {
+                const bool ok = pragmata_tex_diag::reload_textures();
+                // Build 64: the menu row shows DONE (or FAILED) once the engine call has returned.
+                hud.reload_textures_state.store(ok ? pragmatavr::HudTuning::ReloadDone : pragmatavr::HudTuning::ReloadFailed);
+                hud.reload_textures_ms.store(pragmatavr::HudTuning::now_ms_steady());
                 reload_at = t;
             }
             if (reload_at != 0 && t - reload_at > 5000) {

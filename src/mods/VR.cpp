@@ -3466,6 +3466,10 @@ PragmataRowView pragmata_row_view(const pragmatavr::HudTune& t, const pragmatavr
             v.value_color = t.show_boxes ? AMBER : ACCENT;
             v.dim = !t.hud_panel; // ANCHORED only
             break;
+        case pragmatavr::ActionToggleSubtitleMode: // Build 64: was missing, so the row showed no value
+            v.value = t.subtitles_new ? "NEW" : "ORIGINAL";
+            v.value_color = t.subtitles_new ? ACCENT : AMBER;
+            break;
         case pragmatavr::ActionToggleReticleMode:
             v.value = t.reticle_new ? "NEW" : "ORIGINAL";
             v.value_color = t.reticle_new ? ACCENT : AMBER;
@@ -3567,6 +3571,25 @@ PragmataRowView pragmata_row_view(const pragmatavr::HudTune& t, const pragmatavr
         break;
     case Kind::Action:
     default:
+        if (row.action == pragmatavr::ActionReloadTextures) {
+            // Build 64: feedback on the Reload textures row.
+            auto& h = pragmatavr::HudTuning::get();
+            const int st = h.reload_textures_state.load();
+            const int64_t age = pragmatavr::HudTuning::now_ms_steady() - h.reload_textures_ms.load();
+            if (st == pragmatavr::HudTuning::ReloadSent && age < 10000) {
+                v.value = "RELOADING";
+                v.value_color = AMBER;
+            } else if (st == pragmatavr::HudTuning::ReloadDone && age < 1200) {
+                v.value = "RELOADING"; // shown for a moment even though the engine call returns at once
+                v.value_color = AMBER;
+            } else if (st == pragmatavr::HudTuning::ReloadDone && age < 5000) {
+                v.value = "DONE";
+                v.value_color = ACCENT;
+            } else if (st == pragmatavr::HudTuning::ReloadFailed && age < 6000) {
+                v.value = "FAILED";
+                v.value_color = AMBER;
+            }
+        }
         if (row.action == pragmatavr::ActionResetScreen) {
             v.dim = t.layout_mode != 1;
         } else if (row.action == pragmatavr::ActionResetGroup) {
@@ -3739,7 +3762,7 @@ void VR::on_frame() {
     const float title_spacing = title_size * 0.14f;
     const float tier_spacing = tier_size * 0.14f;
     const float title_w = spaced(bold, title_size, 0, 0, 0, "PRAGMATA VR", title_spacing, false) + fs * 0.6f +
-        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B63");
+        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B64");
 
     // Build 36: the tab bar (LT, the four tab titles, RT) replaces the two band titles.
     const float tab_gap = std::round(fs * 1.6f);
@@ -3832,7 +3855,7 @@ void VR::on_frame() {
     {
         const float tx = left + spaced(bold, title_size, left, y, TEXT_BRIGHT, "PRAGMATA VR", title_spacing, true) + fs * 0.6f;
         spaced(bold, title_size, tx, y, ACCENT, "MOD MENU", title_spacing, true);
-        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B63"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B63");
+        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B64"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B64");
 
         const float ly = std::floor(y + title_size * 1.25f + fs * 0.25f);
         dl->AddLine(ImVec2{left, ly}, ImVec2{right, ly}, ACCENT_FAINT, 1.0f);

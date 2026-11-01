@@ -390,17 +390,18 @@ inline std::string streaming_state() {
 
 // Build 62: developer test from the mod menu: via.render.StreamingManager.releaseStreamingTextures() drops the streamed
 // texture data so the game requests it again (with Sharp textures' settings in force). Main thread.
-inline void reload_textures() {
+inline bool reload_textures() {
     spdlog::info("[PragmataVR] Textures: before reload:{}", streaming_state());
     auto t = sdk::find_type_definition("via.render.StreamingManager");
     auto m = t != nullptr ? t->get_method("releaseStreamingTextures") : nullptr;
     if (m == nullptr) {
         spdlog::info("[PragmataVR] Textures: releaseStreamingTextures not found");
-        return;
+        return false;
     }
     std::vector<void*> none{};
     const auto r = m->invoke(nullptr, std::span<void*>(none));
     spdlog::info("[PragmataVR] Textures: releaseStreamingTextures called{}", r.exception_thrown ? " (exception)" : "");
+    return !r.exception_thrown;
 }
 
 // Main thread, every frame (cheap): the one-time type dump after 20 s, and path counts every 60 s.
