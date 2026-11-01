@@ -419,9 +419,9 @@ struct HudTune {
         flat_groups[GroupObjective].gap = 200.0f;
         // Build 58: subtitles start at their own place, a little smaller, raised toward the middle of the view.
         // Build 63: the subtitles' panel is placed in the same centred frame as the other elements (headset independent).
-        // Steve's Pimax tuning (size 0.70, x -5, y -120 against the image bottom, 295 px below the centred frame on the
-        // Dream Air) is the default: y -120 + 295 = 175.
-        set_flat(GroupSubtitles, 0.7000f, -5.0f, 175.0f);
+        // Steve's latest Pimax tuning (size 0.6472, x 0, y -390 against the image bottom, which is 295 px below the centred
+        // frame on the Dream Air) is the default: y -390 + 295 = -95.
+        set_flat(GroupSubtitles, 0.6472f, 0.0f, -95.0f);
         apply_hud_mode();
     }
 };
