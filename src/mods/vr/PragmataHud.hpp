@@ -2262,6 +2262,11 @@ private:
             case MenuRow::Kind::Action:
                 // Build 64: Reload textures was handled with the toggles in Builds 62-63, so A on it did nothing.
                 if (row.action == ActionReloadTextures) {
+                    // Next build: 5 s cool-down between reloads (presses meanwhile get the "no" click and are ignored).
+                    if (now_ms_steady() - reload_textures_ms.load() < 5000 && reload_textures_state.load() != ReloadIdle) {
+                        play_click(false);
+                        return;
+                    }
                     reload_textures_state.store(ReloadSent);
                     reload_textures_ms.store(now_ms_steady());
                     reload_textures_requested = true;
