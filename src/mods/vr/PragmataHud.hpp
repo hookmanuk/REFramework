@@ -2621,6 +2621,18 @@ inline std::atomic<int64_t> g_menu_drawn_ms{0};
 // Build 55: a full-screen menu GUI: ui5100Gui to ui5199Gui. v0.9.0: also the start-up splash screens (ui1210Gui) and
 // the RE Engine logo (ui0430_01Gui): before the first 3D scene AFW has no depth or motion to warp from, so they shook
 // and doubled until the game's normal rendering started.
+// v0.9.2: start-up. NATIVE is forced from launch until the title menu (ui1231Gui / ui1200Gui) or the in-game HUD (any
+// ui2xxx GUI) first shows, whatever Native in menus is set to: the splash screens have no depth or motion for AFW to warp
+// from, so in AFW they blur and double. Set by the GUI draw callback.
+inline std::atomic<bool> g_boot_done{false};
+
+inline bool is_boot_end_gui(std::string_view name) {
+    if (name == "ui1231Gui" || name == "ui1200Gui") {
+        return true;
+    }
+    return name.size() == 9 && name.compare(0, 3, "ui2") == 0 && name.compare(6, 3, "Gui") == 0;
+}
+
 inline bool is_fullscreen_menu(std::string_view name) {
     if (name == "ui1210Gui" || name == "ui0430_01Gui") {
         return true;

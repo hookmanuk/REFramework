@@ -3762,7 +3762,7 @@ void VR::on_frame() {
     const float title_spacing = title_size * 0.14f;
     const float tier_spacing = tier_size * 0.14f;
     const float title_w = spaced(bold, title_size, 0, 0, 0, "PRAGMATA VR", title_spacing, false) + fs * 0.6f +
-        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B64");
+        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2");
 
     // Build 36: the tab bar (LT, the four tab titles, RT) replaces the two band titles.
     const float tab_gap = std::round(fs * 1.6f);
@@ -3855,7 +3855,7 @@ void VR::on_frame() {
     {
         const float tx = left + spaced(bold, title_size, left, y, TEXT_BRIGHT, "PRAGMATA VR", title_spacing, true) + fs * 0.6f;
         spaced(bold, title_size, tx, y, ACCENT, "MOD MENU", title_spacing, true);
-        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B64"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B64");
+        put(font, small_size, right - text_w(font, small_size, "v0.9.2"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2");
 
         const float ly = std::floor(y + title_size * 1.25f + fs * 0.25f);
         dl->AddLine(ImVec2{left, ly}, ImVec2{right, ly}, ACCENT_FAINT, 1.0f);
@@ -4103,7 +4103,10 @@ void VR::on_present() {
         const auto pt = pragmatavr::HudTuning::get().tune();
         // Build 55: NATIVE while a full-screen menu is open (drawn in the last second), if menu_native is on.
         const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        const bool in_menu = pt->menu_native && now_ms - pragmatavr::g_menu_drawn_ms.load(std::memory_order_relaxed) < 1000;
+        // v0.9.2: start-up (splash screens) always NATIVE, also with Native in menus off; 3 minutes at most.
+        static const auto first_ms = now_ms;
+        const bool in_boot = !pragmatavr::g_boot_done.load(std::memory_order_relaxed) && now_ms - first_ms < 180000;
+        const bool in_menu = in_boot || (pt->menu_native && now_ms - pragmatavr::g_menu_drawn_ms.load(std::memory_order_relaxed) < 1000);
         static bool last_in_menu = false;
         if (pt->render_afw && in_menu != last_in_menu) {
             spdlog::info("[PragmataVR] Full-screen menu {}: render {}", in_menu ? "open" : "closed", in_menu ? "NATIVE" : "AFW");
@@ -4799,6 +4802,11 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
         pragmatavr::g_current_gui_name = name;
 
         // Build 55: note full-screen menus (NATIVE while they are open, see VR::on_frame).
+        // v0.9.2: the start-up splash screens are drawn in NATIVE until the title menu or the in-game HUD shows.
+        if (!pragmatavr::g_boot_done.load(std::memory_order_relaxed) && pragmatavr::is_boot_end_gui(name)) {
+            pragmatavr::g_boot_done.store(true, std::memory_order_relaxed);
+            spdlog::info("[PragmataVR] Start-up over ({} drawn): render mode follows the settings again", name);
+        }
         if (pragmatavr::is_fullscreen_menu(name)) {
             pragmatavr::g_menu_drawn_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
