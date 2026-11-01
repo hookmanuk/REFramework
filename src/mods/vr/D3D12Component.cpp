@@ -981,24 +981,41 @@ void pragmata_update_hud_quad(runtimes::OpenXR* openxr) {
         e.rect.extent = XrExtent2Di{(int32_t)(x1 - x0), (int32_t)(y1 - y0)};
         const int eg = i < element_groups.size() ? element_groups[i] : -1;
         if (eg == pragmatavr::GroupReticle) {
-            // Build 61: the gun reticle is shown where it would have been: its area of the game canvas (the canvas centre
-            // straight ahead, like REFramework's own 2D UI sheet), on a plane Distance meters in front of the eyes in view
-            // space, at the angular scale of the HUD panel (Panel size across the image width), times its Size.
+            // Build 62: the gun reticle is shown in the direction the game aimed it (pragmatavr::g_reticle_aim, from the
+            // projection that placed it), plus Left / right and Up / down (canvas px, as on a monitor), on a plane Distance
+            // meters in front of the eyes in view space. Its shape keeps the game's own scale (canvas px -> tan through the
+            // projection, 1 / (960 * [0][0]) per canvas px), times Size. Build 61 put the canvas centre straight ahead at
+            // the HUD panel's scale, which was off the shot.
+            const auto& aim = pragmatavr::g_reticle_aim;
+            static float m00 = 1.0f / std::tan(glm::radians(50.0f));
+            static float m11 = m00;
+            float tx = 0.0f, ty = 0.0f;
+            const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (now_ms - aim.ms.load(std::memory_order_relaxed) < 300) {
+                tx = aim.tx.load(std::memory_order_relaxed);
+                ty = aim.ty.load(std::memory_order_relaxed);
+                m00 = aim.m00.load(std::memory_order_relaxed);
+                m11 = aim.m11.load(std::memory_order_relaxed);
+            }
+            const auto& rg = tune->flat_groups[pragmatavr::GroupReticle];
+            tx += rg.x / (960.0f * m00);
+            ty -= rg.y / (540.0f * m11); // canvas y down: Up / down positive moves it down
             const float sw = (float)p.src_w;
             const float sh = (float)p.src_h;
             const float s = (std::min)(sw / 1920.0f, sh / 1080.0f);
-            const float ox = (sw - 1920.0f * s) * 0.5f;
-            const float oy = (sh - 1080.0f * s) * 0.5f;
-            const auto& nb = pragmatavr::FLAT_BOXES[pragmatavr::GroupReticle];
-            const float ncx = ox + s * (nb[0] + nb[2]) * 0.5f;
-            const float ncy = oy + s * (nb[1] + nb[3]) * 0.5f;
             const float dist = tune->screen[pragmatavr::ScreenReticleDist];
-            const float k = (std::max)(0.05f, tune->flat_groups[pragmatavr::GroupReticle].size);
-            const float mpp_r = sw > 0.0f ? 2.0f * dist * std::tan(glm::radians(tune->screen[pragmatavr::ScreenWidth]) * 0.5f) / sw : 0.0f;
+            const float k = (std::max)(0.05f, rg.size);
+            const float m_per_canvas_px = dist / (960.0f * m00);
             e.view_space = true;
             e.pose.orientation = XrQuaternionf{0.0f, 0.0f, 0.0f, 1.0f};
-            e.pose.position = XrVector3f{(ncx - sw * 0.5f) * mpp_r, (sh * 0.5f - ncy) * mpp_r, -dist};
-            e.size = XrExtent2Df{(float)(x1 - x0) * mpp_r * k, (float)(y1 - y0) * mpp_r * k};
+            e.pose.position = XrVector3f{tx * dist, ty * dist, -dist};
+            e.size = XrExtent2Df{(float)(x1 - x0) / s * m_per_canvas_px * k, (float)(y1 - y0) / s * m_per_canvas_px * k};
+            static int rlogs = 0;
+            if (rlogs < 3 && now_ms - aim.ms.load(std::memory_order_relaxed) < 300) {
+                ++rlogs;
+                spdlog::info("[PragmataVR] Reticle layer: tan ({:.3f}, {:.3f}) at {:.1f} m, {:.3f} x {:.3f} m", tx, ty, dist, e.size.width, e.size.height);
+            }
         } else {
             const glm::vec3 local{(dsp[0] - (float)p.src_w * 0.5f) * mpp, ((float)p.src_h * 0.5f - dsp[1]) * mpp, 0.0f};
             const glm::vec3 pos = placement.position + prot * local;

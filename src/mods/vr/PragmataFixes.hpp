@@ -99,6 +99,11 @@ public:
             }
         }
 
+        // Build 62: tutorial / info windows (the subtitles give way while they show).
+        if (h == "ui2201Gui"_fnv || h == "ui2202Gui"_fnv) {
+            pragmatavr::g_window_drawn_ms.store(now_ms(), std::memory_order_relaxed);
+        }
+
         // Build 57: the red low health effect at the screen edges.
         if (h == "ui2030Gui"_fnv && pragmatavr::HudTuning::get().tune()->hide_low_health) {
             log_once(h, "ui2030Gui: low health screen edges not drawn");
@@ -144,6 +149,16 @@ public:
             if (t - last >= 500) {
                 last = t;
                 pragmata_tex_diag::sharp_textures(pragmatavr::HudTuning::get().tune()->sharp_textures);
+            }
+            // Build 62: developer test, and the state 5 s after it.
+            static int64_t reload_at = 0;
+            if (pragmatavr::HudTuning::get().reload_textures_requested.exchange(false)) {
+                pragmata_tex_diag::reload_textures();
+                reload_at = t;
+            }
+            if (reload_at != 0 && t - reload_at > 5000) {
+                reload_at = 0;
+                spdlog::info("[PragmataVR] Textures: 5 s after reload:{}", pragmata_tex_diag::streaming_state());
             }
         }
         pragmata_marker_fix::install(); // Build 50, once
@@ -213,6 +228,7 @@ private:
             s_gui_list.clear();
         }
         spdlog::info("[PragmataVR] Snapshot GUIs drawn:{}", names);
+        spdlog::info("[PragmataVR] Snapshot textures:{}", pragmata_tex_diag::streaming_state()); // Build 62
         snapshot_texts(names);
     }
 
@@ -406,7 +422,7 @@ private:
 
         // Build 61: the subtitle GUI (ini subtitle_gui): is a line on screen, and hold it at its screen spot meanwhile.
         const auto sub_seen = s_subtitle_seen_ms.load(std::memory_order_relaxed);
-        if (tune->subtitle_gui.empty() || sub_seen == 0 || now - sub_seen > SEEN_WINDOW_MS) {
+        if (tune->subtitle_gui.empty() || !tune->subtitles_new || sub_seen == 0 || now - sub_seen > SEEN_WINDOW_MS) {
             pragmatavr::g_subtitles_shown.store(false, std::memory_order_relaxed);
         } else if (auto view = view_of(scene, tune->subtitle_gui, ctx); view != nullptr) {
             subtitles(view, *tune, now, ctx);

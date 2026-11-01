@@ -349,6 +349,60 @@ inline void sharp_textures(bool on) {
     }
 }
 
+// Build 62: streaming state in one line (logged with each snapshot and around a texture reload).
+inline std::string streaming_state() {
+    auto ctx = sdk::get_thread_context();
+    std::string out{};
+    const auto stat = [&](const char* type, const char* method) {
+        auto t = sdk::find_type_definition(type);
+        auto m = t != nullptr ? t->get_method(method) : nullptr;
+        if (m == nullptr) {
+            return;
+        }
+        std::vector<void*> none{};
+        const auto r = m->invoke(nullptr, std::span<void*>(none));
+        if (!r.exception_thrown) {
+            auto rt = m->get_return_type();
+            out += fmt::format(" {}={}", std::string_view{method}.substr(4), value_of(r, rt != nullptr ? rt->get_full_name() : std::string{}));
+        }
+    };
+    stat("via.render.StreamingManager", "get_RegisteredStreamingTextureCount");
+    stat("via.render.StreamingResourceManager", "get_UnexpectedMipRequestTextureCount");
+    stat("via.render.StreamingResourceManager", "get_TotalStreamingResourceCount");
+    stat("via.render.MeshRenderer", "get_StreamingLoadLodRate");
+    if (auto renderer_t = sdk::find_type_definition("via.render.Renderer"); renderer_t != nullptr) {
+        auto get_rc = renderer_t->get_method("get_RenderConfig");
+        auto renderer = sdk::get_native_singleton<void>("via.render.Renderer");
+        auto rc_t = sdk::find_type_definition("via.render.RenderConfig");
+        if (get_rc != nullptr && renderer != nullptr && rc_t != nullptr) {
+            auto rc = get_rc->call<::REManagedObject*>(ctx, renderer);
+            if (rc != nullptr) {
+                for (const char* g : {"get_MinimumStreamingTextureResolution", "get_StreamingTextureLoadLevelBias", "get_TextureQuality"}) {
+                    if (auto m = rc_t->get_method(g); m != nullptr) {
+                        out += fmt::format(" {}={}", std::string_view{g}.substr(4), m->call<uint32_t>(ctx, rc));
+                    }
+                }
+            }
+        }
+    }
+    return out;
+}
+
+// Build 62: developer test from the mod menu: via.render.StreamingManager.releaseStreamingTextures() drops the streamed
+// texture data so the game requests it again (with Sharp textures' settings in force). Main thread.
+inline void reload_textures() {
+    spdlog::info("[PragmataVR] Textures: before reload:{}", streaming_state());
+    auto t = sdk::find_type_definition("via.render.StreamingManager");
+    auto m = t != nullptr ? t->get_method("releaseStreamingTextures") : nullptr;
+    if (m == nullptr) {
+        spdlog::info("[PragmataVR] Textures: releaseStreamingTextures not found");
+        return;
+    }
+    std::vector<void*> none{};
+    const auto r = m->invoke(nullptr, std::span<void*>(none));
+    spdlog::info("[PragmataVR] Textures: releaseStreamingTextures called{}", r.exception_thrown ? " (exception)" : "");
+}
+
 // Main thread, every frame (cheap): the one-time type dump after 20 s, and path counts every 60 s.
 inline void tick() {
     static int64_t first = 0;

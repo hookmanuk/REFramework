@@ -12,6 +12,8 @@
 // (ui3400, own tuning) and everything else calling the function are left alone. Nothing in the game is written: the
 // hook edits the function's own return value before the caller sees it.
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -164,6 +166,28 @@ inline void install() {
             } else if (tl_owner_hash == "ui3200Gui"_fnv || tl_owner_hash == "ui3210Gui"_fnv) {
                 tx = tune->enemy_bar[pragmatavr::EnemyX];
                 ty = tune->enemy_bar[pragmatavr::EnemyY];
+            }
+            // Build 62: the gun reticle (ui2001Gui): note its direction for its own layer. The game projected the aim point
+            // with this (off-centre, one eye) projection: centred ndc = raw ndc + [2][0] (x), raw ndc + [2][1] (y up), and
+            // tan = centred ndc / [0][0] (x), / [1][1] (y).
+            if (tl_owner_hash == "ui2001Gui"_fnv && proj[0][0] != 0.0f && proj[1][1] != 0.0f && std::isfinite(proj[0][0]) &&
+                std::isfinite(proj[1][1])) {
+                const float ndc_x = r[0] / (w * 0.5f) - 1.0f + proj[2][0];
+                const float ndc_y = 1.0f - r[1] / (h * 0.5f) + proj[2][1];
+                auto& aim = pragmatavr::g_reticle_aim;
+                aim.tx.store(ndc_x / proj[0][0], std::memory_order_relaxed);
+                aim.ty.store(ndc_y / proj[1][1], std::memory_order_relaxed);
+                aim.m00.store(proj[0][0], std::memory_order_relaxed);
+                aim.m11.store(proj[1][1], std::memory_order_relaxed);
+                aim.rx.store(r[0] + dx + tx, std::memory_order_relaxed);
+                aim.ry.store(r[1] + dy + ty, std::memory_order_relaxed);
+                aim.ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
+                static std::atomic<int> rlog{0};
+                if (rlog.fetch_add(1) < 5) {
+                    spdlog::info("[PragmataVR] Reticle aim: raw ({:.0f}, {:.0f}) of {:.0f} x {:.0f}, tan ({:.3f}, {:.3f}), [0][0] {:.3f} [1][1] {:.3f}",
+                                 r[0], r[1], w, h, ndc_x / proj[0][0], ndc_y / proj[1][1], proj[0][0], proj[1][1]);
+                }
             }
             r[0] += dx + tx;
             r[1] += dy + ty;

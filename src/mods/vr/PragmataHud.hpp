@@ -137,7 +137,7 @@ inline constexpr std::array<std::array<float, 2>, GroupCount> FLAT_PIVOTS{{
     {305.0f, 300.0f},  // tutorial box
     {1640.0f, 200.0f}, // Build 47: item pickups (estimate, top right; the content extent log measures it)
     {960.0f, 110.0f},  // Build 53: objective banner (estimate, top middle, from the game's Options preview)
-    {960.0f, 930.0f},  // Build 58: subtitles: the ui2010Gui layout anchor (960, 930)
+    {960.0f, 930.0f},  // Build 58: subtitles: the ui2010Gui layout anchor (960, 930), bottom-anchored like its box (Build 62)
     {960.0f, 540.0f},  // Build 60: reticle (canvas centre; drawn at full size, its layer is sized by Size)
 }};
 
@@ -165,9 +165,12 @@ inline constexpr std::array<std::array<float, 4>, GroupCount> FLAT_BOXES{{
                                        // right: the hub panel ("Y" stations) and the resource counter, measured in snapshots
     {480.0f, 0.0f, 1440.0f, 360.0f},   // Build 53: objective banner (icon, objective line). Build 56: bottom 260 -> 360 for the
                                        // second and third objective lines (secondaryObjective +102, tertiaryObjective +148)
-    {560.0f, 700.0f, 1360.0f, 975.0f}, // Build 61: subtitles (ui2010Gui layout dump: lines centered on 960, 930, text region
-                                       // 650 wide, two speakers with names and captions up to 230 above). Only cut while a line
-                                       // shows, and the subtitles are pinned to their anchor meanwhile (PragmataFixes).
+    {570.0f, 740.0f, 1350.0f, 1030.0f}, // Build 62: subtitles. ui2010Gui is laid out against the BOTTOM of the eye image (not
+                                        // centred like the elements switched to Screen view): in snapshot 1793546511 its name
+                                        // and line bars sat at 904 and 946 in canvas px measured from the image bottom (layout
+                                        // 850 / 893 + 54). These y values are in that bottom-anchored frame (anchor_dy converts),
+                                        // covering two speakers with names (773) down to the second line (1003). The area is
+                                        // cut at the subtitles' own place in the band below the game view (no capture shift).
     {780.0f, 360.0f, 1140.0f, 720.0f}, // Build 61: reticle, drawn flat it sits around the canvas centre (960, 540); 360 x 360
                                        // also holds the bigger gun reticles. Shown on its own view-space layer.
 }};
@@ -183,6 +186,23 @@ inline std::atomic<uint64_t> g_subtitle_hash{name_hash("ui2010Gui")};
 // Build 58: set on the main thread (PragmataFixes) while ui0400Gui (Build 60) shows subtitle text. It is drawn all the time,
 // so its (large, low in the view) area is only cut out of the eyes while a line is actually on screen.
 inline std::atomic<bool> g_subtitles_shown{false}; // Build 61: off until the check sees a line
+// Build 62: the subtitles give way (not cut, lifted clear of the objective's capture spot) while the objective banner or a
+// window / full-screen menu is drawn; set each frame by anchored_boxes_px, read by the draw callback.
+inline std::atomic<bool> g_subtitle_yield{false};
+// Build 62: last time (steady clock ms) a tutorial / info window (ui2201Gui) was drawn.
+inline std::atomic<int64_t> g_window_drawn_ms{0};
+
+// Build 62: where the game aims the gun reticle. app.GuiBehaviorV2.applyPostureData places ui2001Gui at the aim point
+// projected with the game camera (one eye, HMD included). The marker fix hook stores the canvas position the reticle is
+// drawn at and its direction (tangents in the eye's centred view, from the projection matrix), so its layer is shown in
+// that direction (Build 61 assumed the canvas centre at the HUD panel's scale, which put it off the shot).
+struct ReticleAim {
+    std::atomic<float> rx{960.0f}, ry{540.0f}; // canvas px where the GUI draws it (after the marker fix)
+    std::atomic<float> tx{0.0f}, ty{0.0f};     // tan of the direction, x right, y up
+    std::atomic<float> m00{1.0f}, m11{1.0f};   // projection scale (ndc per tan)
+    std::atomic<int64_t> ms{0};                // steady clock ms of the last update
+};
+inline ReticleAim g_reticle_aim{};
 
 // Build 57: while a snapshot is taken, the GUI draw callbacks collect the names of every GUI drawn (steady clock ms;
 // PragmataFixes logs them), to identify effects such as the low health screen edges.
@@ -247,6 +267,8 @@ struct HudTune {
     // are on (the game otherwise places walk-and-talk subtitles next to the speaker, outside their capture area).
     std::string subtitle_gui{"ui2010Gui"};
     bool subtitle_pin{true};
+    // Build 62: developer switch, like Reticle: true = NEW (subtitles on their own panel), false = ORIGINAL (as v0.9.1).
+    bool subtitles_new{true};
     // Build 61: item pickups area: 0 = automatic (the big area only while a replicator list is open), 1 = always the big
     // area (Builds 58-60), 2 = always the field area.
     int items_area{0};
@@ -284,7 +306,7 @@ struct HudTune {
     int layout_mode{0};
     // width (degrees), distance (m), left/right (deg), up/down (deg). v0.9.0: Quest 3 tuning. Build 61: [4] = reticle distance (m),
     // 1.0 = where REFramework's own 2D UI sheet showed it (VR_2DUIDistance).
-    std::array<float, 5> screen{100.0f, 2.5f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 5> screen{100.0f, 2.5f, 0.0f, 0.0f, 3.0f}; // Build 62: reticle 3.0 m (was 1.0)
     std::array<bool, 5> screen_invert{};
 
     // Build 35: PERFORMANCE section. These drive REFramework's own settings (VR::on_present applies them), so the
@@ -690,6 +712,8 @@ enum MenuAction : int {
     ActionToggleLowHealth,      // Build 57
     ActionToggleSharpTextures,  // Build 59
     ActionToggleReticleMode,    // Build 60
+    ActionToggleSubtitleMode,   // Build 62
+    ActionReloadTextures,       // Build 62 (developer test)
 };
 
 class HudTuning {
@@ -883,6 +907,7 @@ public:
     // The game-screen HUD and the mod menu are real planes in tracking space (anchor pose + offsets), seen from each
     // eye's actual pose, so they stay put when the head turns, tilts or moves.
     std::atomic<bool> recenter_requested{false};
+    std::atomic<bool> reload_textures_requested{false}; // Build 62: PragmataFixes runs it on the main thread
     std::atomic<bool> view_recenter_requested{false}; // Build 40: VR::on_present recenters the view (rotation and standing origin)
     std::atomic<int> companion_generation{0}; // bumped when the companion mode changes (re-logs their setup)
     std::atomic<bool> recenter_if_far{false};
@@ -1159,6 +1184,10 @@ private:
         m_rows.back().group = GroupReticle;
         add_row(MenuRow::Kind::Toggle, GroupReticle, -1, ActionToggleHackLock, "Lock", "A = lock or unlock this element (locked = its values cannot change)");
         add_row(MenuRow::Kind::Value, GroupReticle, FieldSize, ActionNone, "Size", "A = edit. Size of the gun reticle");
+        add_row(MenuRow::Kind::Value, GroupReticle, FieldX, ActionNone, "Left / right",
+            "A = edit. Moves the reticle sideways onto where your shots land");
+        add_row(MenuRow::Kind::Value, GroupReticle, FieldY, ActionNone, "Up / down",
+            "A = edit. Moves the reticle up or down onto where your shots land");
         add_row(MenuRow::Kind::Value, GROUP_SCREEN, ScreenReticleDist, ActionNone, "Distance",
             "A = edit. How far away the gun reticle is shown (meters). Its size in view stays the same");
         add_row(MenuRow::Kind::Action, GroupReticle, -1, ActionResetGroup, "Reset to defaults", "A = back to the starting values (blocked while locked)");
@@ -1182,6 +1211,10 @@ private:
             "A = On: full-screen menus (Firmware Updater, terminals...) draw in NATIVE while open, no AFW trails. Off: keep AFW");
         column = 1;
         add_header("DEVELOPER", "TOOLS");
+        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleSubtitleMode, "Subtitles",
+            "A = New (own panel: no AFW doubling, SUBTITLES section) or Original (drawn as the game and REFramework do)");
+        add_row(MenuRow::Kind::Action, -1, -1, ActionReloadTextures, "Reload textures",
+            "A = test: drop and reload the game's streamed textures now (may hitch). For comparing texture detail");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleReticleMode, "Reticle",
             "A = New (own layer: no AFW doubling, RETICLE Size and Distance) or Original (drawn as before Build 60)");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleHackBackdrop, "Door hack backdrop",
@@ -1358,6 +1391,8 @@ private:
         s += "# subtitle_pin: 1 = subtitles held at their screen spot while shown on their panel (not next to the speaker).\n";
         s += fmt::format("subtitle_gui={}\n", t.subtitle_gui.empty() ? std::string{"none"} : t.subtitle_gui);
         s += fmt::format("subtitle_pin={}\n", t.subtitle_pin ? 1 : 0);
+        s += "# subtitles_new: 1 = subtitles on their own panel, 0 = original drawing (Build 62).\n";
+        s += fmt::format("subtitles_new={}\n", t.subtitles_new ? 1 : 0);
         s += "# items_area: item pickups area. 0 = automatic (big area only while a replicator list is open), 1 = always big,\n";
         s += "#   2 = always the small field area (Build 61).\n";
         s += fmt::format("items_area={}\n", t.items_area);
@@ -1585,6 +1620,7 @@ private:
                 else if (key == "sharp_textures") t->sharp_textures = val != 0.0f;
                 else if (key == "reticle_new") t->reticle_new = val != 0.0f;
                 else if (key == "subtitle_pin") t->subtitle_pin = val != 0.0f;
+                else if (key == "subtitles_new") t->subtitles_new = val != 0.0f;
                 else if (key == "items_area") t->items_area = std::clamp((int)val, 0, 2);
                 else if (key == "hud_fixed") t->hud_fixed = val != 0.0f;
                 else if (key == "lock_invert") t->lock_invert = val != 0.0f;
@@ -1742,7 +1778,7 @@ private:
 
     // Build 61: values the render threads read without a tune copy.
     static void publish_names(const HudTune& t) {
-        g_subtitle_hash.store(t.subtitle_gui.empty() ? 0 : name_hash(t.subtitle_gui), std::memory_order_relaxed);
+        g_subtitle_hash.store(t.subtitle_gui.empty() || !t.subtitles_new ? 0 : name_hash(t.subtitle_gui), std::memory_order_relaxed);
         g_items_area_mode_cache.store(t.items_area, std::memory_order_relaxed);
     }
 
@@ -2091,6 +2127,15 @@ private:
                     t->enemy_locked = !t->enemy_locked;
                     commit(t);
                     spdlog::info("[PragmataVR] Menu: enemy health bars {}", t->enemy_locked ? "locked" : "unlocked");
+                    play_click(true);
+                } else if (row.action == ActionToggleSubtitleMode) {
+                    t->subtitles_new = !t->subtitles_new;
+                    commit(t);
+                    spdlog::info("[PragmataVR] Menu: subtitles {}", t->subtitles_new ? "new" : "original");
+                    play_click(true);
+                } else if (row.action == ActionReloadTextures) {
+                    reload_textures_requested = true;
+                    spdlog::info("[PragmataVR] Menu: reload textures requested");
                     play_click(true);
                 } else if (row.action == ActionToggleReticleMode) {
                     t->reticle_new = !t->reticle_new;
@@ -2560,6 +2605,17 @@ inline bool is_fullscreen_menu(std::string_view name) {
 // right, health bottom left, stamina bottom right. The corners of each eye's image are outside the lens view on any
 // headset, so world HUD (reticle, enemy bars, hacking circle) drawn there is never visible anyway, and anything cut
 // together with an element is invisible. The panel puts each element back at its tuned place (AnchoredBox ox / oy).
+// Build 62: elements laid out against the bottom of the eye image (the subtitles) have their box and pivot in that frame;
+// this converts to the centred canvas frame the rest of the code uses (canvas px).
+inline float anchor_dy(int g, float w, float h) {
+    if (g != GroupSubtitles || w <= 0.0f || h <= 0.0f) {
+        return 0.0f;
+    }
+    const float s = (std::min)(w / 1920.0f, h / 1080.0f);
+    const float oy = (h - 1080.0f * s) * 0.5f;
+    return oy / s;
+}
+
 inline glm::vec2 fixed_capture_shift(const HudTune& t, int g, float w, float h) {
     if (!t.fixed_capture_corners || g <= GroupHack || g >= GroupCount || w <= 0.0f || h <= 0.0f) {
         return glm::vec2{0.0f};
@@ -2592,11 +2648,15 @@ inline glm::vec2 fixed_capture_shift(const HudTune& t, int g, float w, float h) 
         return glm::vec2{(M - (ox + s * cx0)) / s, (bottom_px - (oy + s * cy1)) / s};
     }
     if (g == GroupSubtitles) {
-        // Build 58: horizontally where the game puts them, just above the objective (the tallest element on the bottom
-        // edge). Low in the view; only cut out while a subtitle is on screen (g_subtitles_shown).
+        // Build 62: cut at their own place (bottom-anchored, in the band below the game view). While they give way (the
+        // objective's capture spot covers that place), they are lifted just above it and stay in the eye images.
+        if (!g_subtitle_yield.load(std::memory_order_relaxed)) {
+            return glm::vec2{0.0f};
+        }
         const auto ob = box_for(GroupObjective);
-        const float bottom_px = (h - M) - s * (ob[3] - ob[1]) - GAP;
-        return glm::vec2{0.0f, (bottom_px - (oy + s * cy1)) / s};
+        const float obj_top = (h - M) - s * (ob[3] - ob[1]);
+        const float sub_bottom = oy + s * (cy1 + anchor_dy(g, w, h));
+        return glm::vec2{0.0f, (std::min)(0.0f, (obj_top - GAP - sub_bottom) / s)};
     }
     // Build 61: the reticle takes the bottom right corner (free since stamina moved above health in Build 58).
     const bool right = g == GroupWeapons || g == GroupReticle;
@@ -2611,17 +2671,38 @@ inline std::vector<AnchoredBox> anchored_boxes_px(const HudTune& t, float w, flo
     const float s = (std::min)(w / 1920.0f, h / 1080.0f);
     const float ox = (w - 1920.0f * s) * 0.5f;
     const float oy = (h - 1080.0f * s) * 0.5f;
+    // Build 62: the subtitles give way while the objective banner (its capture spot covers their place) or a window or
+    // full-screen menu is shown: they are not cut then (the Riot Blaster window was cut in snapshot 1793546956).
+    if (frame >= 0) {
+        const int oage = frame - g_group_drawn_frame[GroupObjective].load();
+        const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const bool yield = (oage >= 0 && oage <= 10) || now - g_window_drawn_ms.load(std::memory_order_relaxed) < 500 ||
+                           now - g_menu_drawn_ms.load(std::memory_order_relaxed) < 500;
+        if (g_subtitle_yield.exchange(yield, std::memory_order_relaxed) != yield) {
+            static int logs = 0;
+            if (++logs <= 40) {
+                spdlog::info("[PragmataVR] Subtitles: {}", yield ? "give way (objective, window or menu shown)" : "own panel again");
+            }
+        }
+    }
     for (int g = GroupHealth; g < GroupCount; ++g) {
         if (frame >= 0) {
             const int age = frame - g_group_drawn_frame[g].load();
             if (age < 0 || age > 10) { // Build 29: 10 frames (was 4)
                 continue; // not drawn in the last few frames
             }
+            if (g == GroupSubtitles && g_subtitle_yield.load(std::memory_order_relaxed)) {
+                continue;
+            }
         }
-        const auto b = box_for(g);
+        auto b = box_for(g);
+        const float ady = anchor_dy(g, w, h); // Build 62: bottom-anchored subtitles
+        b[1] += ady;
+        b[3] += ady;
         const auto& gt = t.flat_groups[g];
         const float px = FLAT_PIVOTS[g][0];
-        const float py = FLAT_PIVOTS[g][1];
+        const float py = FLAT_PIVOTS[g][1] + ady;
         // Build 56: the game draws the element at full size (its own layout, moved to its capture spot); this area is cut
         // out and shown on the element's own quad.
         const auto sh = fixed_capture_shift(t, g, w, h);
@@ -2671,7 +2752,9 @@ inline std::string capture_audit(const HudTune& t, float w, float h) {
             const auto sh = fixed_capture_shift(t, g, w, h);
             // The capture spot is placed from the box in use now (its top left corner for item pickups); each variant
             // keeps that corner and its own size.
-            const auto cb = box_for(g);
+            auto cb = box_for(g);
+            cb[1] += anchor_dy(g, w, h); // Build 62
+            cb[3] += anchor_dy(g, w, h);
             R r{cb[0] + sh.x, cb[1] + sh.y, cb[0] + sh.x + (b[2] - b[0]), cb[1] + sh.y + (b[3] - b[1]), g};
             const float ix0 = (std::max)(r.x0, 0.0f), iy0 = (std::max)(r.y0, 0.0f);
             const float ix1 = (std::min)(r.x1, 1920.0f), iy1 = (std::min)(r.y1, 1080.0f);
