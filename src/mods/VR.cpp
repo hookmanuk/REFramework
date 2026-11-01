@@ -3739,7 +3739,7 @@ void VR::on_frame() {
     const float title_spacing = title_size * 0.14f;
     const float tier_spacing = tier_size * 0.14f;
     const float title_w = spaced(bold, title_size, 0, 0, 0, "PRAGMATA VR", title_spacing, false) + fs * 0.6f +
-        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B62");
+        spaced(bold, title_size, 0, 0, 0, "MOD MENU", title_spacing, false) + gap * 2.0f + text_w(font, small_size, "v0.9.2 B63");
 
     // Build 36: the tab bar (LT, the four tab titles, RT) replaces the two band titles.
     const float tab_gap = std::round(fs * 1.6f);
@@ -3832,7 +3832,7 @@ void VR::on_frame() {
     {
         const float tx = left + spaced(bold, title_size, left, y, TEXT_BRIGHT, "PRAGMATA VR", title_spacing, true) + fs * 0.6f;
         spaced(bold, title_size, tx, y, ACCENT, "MOD MENU", title_spacing, true);
-        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B62"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B62");
+        put(font, small_size, right - text_w(font, small_size, "v0.9.2 B63"), y + (title_size - small_size) * 0.75f, TEXT_DIM, "v0.9.2 B63");
 
         const float ly = std::floor(y + title_size * 1.25f + fs * 0.25f);
         dl->AddLine(ImVec2{left, ly}, ImVec2{right, ly}, ACCENT_FAINT, 1.0f);
@@ -4843,6 +4843,9 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                 if (fgroup == pragmatavr::GroupReticle && !ftune->reticle_new) {
                     fgroup = -1; // Build 60: Reticle = ORIGINAL, drawn as in v0.9.1
                 }
+                if (fgroup == pragmatavr::GroupSubtitles && !ftune->subtitles_new) {
+                    fgroup = -1; // Build 63: Subtitles = ORIGINAL, drawn as in v0.9.1 (also checked here, like the reticle)
+                }
                 const bool fnative = fgroup >= 0;
                 if (!fnative) {
                     fgroup = pragmatavr::companion_group(name, fpartner);
@@ -4869,17 +4872,8 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                                                  : glm::vec2{0.0f};
                     float dx = anchored ? cshift.x : gt.x + eye_shift;
                     float dy = anchored ? cshift.y : gt.y; // canvas y points down; Build 22: Up / down positive moves the element down
-                    // Build 62: the reticle is drawn where the game aims it (the projected aim point). Move it to the centre of
-                    // its capture area first; its layer is placed in the aim direction (D3D12Component).
-                    if (anchored && fgroup == pragmatavr::GroupReticle) {
-                        const auto& aim = pragmatavr::g_reticle_aim;
-                        const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::steady_clock::now().time_since_epoch()).count();
-                        if (now_ms - aim.ms.load(std::memory_order_relaxed) < 300) {
-                            dx += 960.0f - aim.rx.load(std::memory_order_relaxed);
-                            dy += 540.0f - aim.ry.load(std::memory_order_relaxed);
-                        }
-                    }
+                    // Build 63: the Build 62 aim recentring is gone: the game draws the reticle at the canvas centre (no
+                    // projected aim point was ever recorded for ui2001Gui), so the centre of its area is the game camera's aim.
                     // Build 56: panel elements are drawn at full size; their Size is applied to their own OpenXR quad, so the
                     // game's fixed-size windows (objective, item pickups, tutorial) never cut them.
                     const float k = anchored ? 1.0f : gt.size;

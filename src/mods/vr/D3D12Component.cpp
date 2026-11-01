@@ -981,40 +981,57 @@ void pragmata_update_hud_quad(runtimes::OpenXR* openxr) {
         e.rect.extent = XrExtent2Di{(int32_t)(x1 - x0), (int32_t)(y1 - y0)};
         const int eg = i < element_groups.size() ? element_groups[i] : -1;
         if (eg == pragmatavr::GroupReticle) {
-            // Build 62: the gun reticle is shown in the direction the game aimed it (pragmatavr::g_reticle_aim, from the
-            // projection that placed it), plus Left / right and Up / down (canvas px, as on a monitor), on a plane Distance
-            // meters in front of the eyes in view space. Its shape keeps the game's own scale (canvas px -> tan through the
-            // projection, 1 / (960 * [0][0]) per canvas px), times Size. Build 61 put the canvas centre straight ahead at
-            // the HUD panel's scale, which was off the shot.
-            const auto& aim = pragmatavr::g_reticle_aim;
-            static float m00 = 1.0f / std::tan(glm::radians(50.0f));
-            static float m11 = m00;
-            float tx = 0.0f, ty = 0.0f;
-            const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            if (now_ms - aim.ms.load(std::memory_order_relaxed) < 300) {
-                tx = aim.tx.load(std::memory_order_relaxed);
-                ty = aim.ty.load(std::memory_order_relaxed);
-                m00 = aim.m00.load(std::memory_order_relaxed);
-                m11 = aim.m11.load(std::memory_order_relaxed);
+            // Build 63: the game draws the gun reticle at the centre of its canvas, which is where the GAME CAMERA aims (no
+            // projected aim point was recorded in Build 62). So the layer is placed on the game camera's axis, as
+            // REFramework drives the eye views: game camera = (rotation offset)^-1 at the standing origin in tracking space
+            // (eye view = camera * offset * HMD). In Fixed mode the reticle therefore stays on the camera's aim as the right
+            // stick turns the view, and your head can look around it; in Follows Head mode it is in view space instead.
+            // Left / right and Up / down move it in canvas px (as on a monitor), Distance sets its depth, and its shape keeps
+            // the game's scale (canvas px -> tan through the eye's horizontal field of view), times Size.
+            float m00 = 1.0f / std::tan(glm::radians(50.0f));
+            if (!openxr->stage_views.empty()) {
+                float acc = 0.0f;
+                int n = 0;
+                for (const auto& v : openxr->stage_views) {
+                    const float span = std::tan(v.fov.angleRight) - std::tan(v.fov.angleLeft);
+                    if (span > 0.01f) {
+                        acc += 2.0f / span;
+                        ++n;
+                    }
+                }
+                if (n > 0) {
+                    m00 = acc / (float)n;
+                }
             }
             const auto& rg = tune->flat_groups[pragmatavr::GroupReticle];
-            tx += rg.x / (960.0f * m00);
-            ty -= rg.y / (540.0f * m11); // canvas y down: Up / down positive moves it down
+            const float tx = rg.x / (960.0f * m00);
+            const float ty = -rg.y / (960.0f * m00); // canvas y down: Up / down positive moves it down
             const float sw = (float)p.src_w;
             const float sh = (float)p.src_h;
             const float s = (std::min)(sw / 1920.0f, sh / 1080.0f);
             const float dist = tune->screen[pragmatavr::ScreenReticleDist];
             const float k = (std::max)(0.05f, rg.size);
             const float m_per_canvas_px = dist / (960.0f * m00);
-            e.view_space = true;
-            e.pose.orientation = XrQuaternionf{0.0f, 0.0f, 0.0f, 1.0f};
-            e.pose.position = XrVector3f{tx * dist, ty * dist, -dist};
+            const glm::vec3 local{tx * dist, ty * dist, -dist};
+            if (tune->head_locked) {
+                e.view_space = true;
+                e.pose.orientation = XrQuaternionf{0.0f, 0.0f, 0.0f, 1.0f};
+                e.pose.position = XrVector3f{local.x, local.y, local.z};
+            } else {
+                const auto& vrm = VR::get();
+                const glm::quat q = glm::normalize(glm::inverse(vrm->get_rotation_offset()));
+                const auto so = vrm->get_standing_origin();
+                const glm::vec3 pos = glm::vec3{so.x, so.y, so.z} + q * local;
+                e.view_space = false;
+                e.pose.orientation = XrQuaternionf{q.x, q.y, q.z, q.w};
+                e.pose.position = XrVector3f{pos.x, pos.y, pos.z};
+            }
             e.size = XrExtent2Df{(float)(x1 - x0) / s * m_per_canvas_px * k, (float)(y1 - y0) / s * m_per_canvas_px * k};
             static int rlogs = 0;
-            if (rlogs < 3 && now_ms - aim.ms.load(std::memory_order_relaxed) < 300) {
+            if (rlogs < 3) {
                 ++rlogs;
-                spdlog::info("[PragmataVR] Reticle layer: tan ({:.3f}, {:.3f}) at {:.1f} m, {:.3f} x {:.3f} m", tx, ty, dist, e.size.width, e.size.height);
+                spdlog::info("[PragmataVR] Reticle layer: {} at {:.1f} m, offset tan ({:.3f}, {:.3f}), {:.3f} x {:.3f} m, fov scale {:.3f}",
+                             tune->head_locked ? "view space" : "game camera axis", dist, tx, ty, e.size.width, e.size.height, m00);
             }
         } else {
             const glm::vec3 local{(dsp[0] - (float)p.src_w * 0.5f) * mpp, ((float)p.src_h * 0.5f - dsp[1]) * mpp, 0.0f};

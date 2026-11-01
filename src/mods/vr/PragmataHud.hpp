@@ -152,14 +152,16 @@ inline constexpr std::array<std::array<float, 4>, GroupCount> FLAT_BOXES{{
                                        // Older: health (Build 30: left edge 70 -> 0, the bar's left end showed in the eyes. Build 54:
                                        // bottom 1030 -> 1080, the status icons under the bar were cut off)
     {720.0f, 950.0f, 1200.0f, 1020.0f}, // stamina (Build 34: bottom 1050 -> 1020, measured)
-    {1400.0f, 640.0f, 1850.0f, 1080.0f}, // weapon wheel (Build 57: the full-size wheel is around its pivot 1612, 877, about
+    {1292.0f, 640.0f, 1850.0f, 1080.0f}, // weapon wheel (Build 63: left 1400 -> 1292, the weapon modifier icons left of the
+                                         // wheel were cut, snapshot 1793560717; the widest that still fits beside item pickups)
+                                         // Older: weapon wheel (Build 57: the full-size wheel is around its pivot 1612, 877, about
                                          // 340 x 340 with its label; was 1160,500-1575,890, measured on the shrunk wheel)
                                         // Old notes: (Build 28: the wheel reaches well above its companion's box. Build 34:
                                         // right 1920 -> 1575, bottom 1080 -> 890, left 1180 -> 1160, measured from the
                                         // Build 31 captures; the old box was about 3x the wheel and took in other HUD)
     {60.0f, 200.0f, 590.0f, 450.0f},   // tutorial box (Build 32: right 620 -> 590, bottom 480 -> 400; Build 34: bottom 450, a
                                        // 4-line tutorial reached the 400 edge; room for about 2 more lines)
-    {1100.0f, 0.0f, 1940.0f, 720.0f},  // Build 47: item pickups. Build 58: bottom 600 -> 720, the REM Replicator beta panel
+    {1100.0f, 0.0f, 1920.0f, 720.0f},  // Build 47: item pickups. Build 63: right 1940 -> 1920 (room for the weapon wheel). Build 58: bottom 600 -> 720, the REM Replicator beta panel
                                        // has more rows than alpha and ran about 75 px past the old bottom. Build 57: left 1000 -> 1100 (the replicator panel starts at
                                        // about 1104), so the area fits between the tutorial box and the weapon wheel. Build 54: 1300 -> 1000 left, 420 -> 600 bottom, 1920 -> 1940
                                        // right: the hub panel ("Y" stations) and the resource counter, measured in snapshots
@@ -182,7 +184,7 @@ inline constexpr std::array<float, 4> ITEMS_BOX_FIELD{1150.0f, 0.0f, 1940.0f, 38
 // Build 61: false by default (the field area), so a broken check cannot leave the big area in use everywhere.
 inline std::atomic<bool> g_items_hub{false};
 // Build 61: the subtitle GUI's name hash (ini subtitle_gui, default ui2010Gui), read by group_for on the render threads.
-inline std::atomic<uint64_t> g_subtitle_hash{name_hash("ui2010Gui")};
+inline std::atomic<uint64_t> g_subtitle_hash{0}; // Build 63: 0 until the ini says subtitles_new=1
 // Build 58: set on the main thread (PragmataFixes) while ui0400Gui (Build 60) shows subtitle text. It is drawn all the time,
 // so its (large, low in the view) area is only cut out of the eyes while a line is actually on screen.
 inline std::atomic<bool> g_subtitles_shown{false}; // Build 61: off until the check sees a line
@@ -262,13 +264,13 @@ struct HudTune {
     bool sharp_textures{true};
     // Build 60: developer switch for the gun reticle: true = NEW (Build 61: on its own view-space layer, RETICLE Size and
     // Distance), false = ORIGINAL (drawn exactly as in v0.9.1).
-    bool reticle_new{true};
+    bool reticle_new{false}; // Build 63: ORIGINAL by default (experimental)
     // Build 61: the subtitle GUI (ini subtitle_gui) and whether it is pinned to its monitor anchor while the HUD panels
     // are on (the game otherwise places walk-and-talk subtitles next to the speaker, outside their capture area).
     std::string subtitle_gui{"ui2010Gui"};
     bool subtitle_pin{true};
     // Build 62: developer switch, like Reticle: true = NEW (subtitles on their own panel), false = ORIGINAL (as v0.9.1).
-    bool subtitles_new{true};
+    bool subtitles_new{false}; // Build 63: ORIGINAL by default (experimental)
     // Build 61: item pickups area: 0 = automatic (the big area only while a replicator list is open), 1 = always the big
     // area (Builds 58-60), 2 = always the field area.
     int items_area{0};
@@ -416,7 +418,10 @@ struct HudTune {
         hack_headset.gap = 0.0f;
         flat_groups[GroupObjective].gap = 200.0f;
         // Build 58: subtitles start at their own place, a little smaller, raised toward the middle of the view.
-        set_flat(GroupSubtitles, 0.7000f, 0.0f, -150.0f);
+        // Build 63: the subtitles' panel is placed in the same centred frame as the other elements (headset independent).
+        // Steve's Pimax tuning (size 0.70, x -5, y -120 against the image bottom, 295 px below the centred frame on the
+        // Dream Air) is the default: y -120 + 295 = 175.
+        set_flat(GroupSubtitles, 0.7000f, -5.0f, 175.0f);
         apply_hud_mode();
     }
 };
@@ -580,10 +585,11 @@ enum MenuTab : int {
     TabGeneral = 0,
     TabHud = 1,
     TabAdvanced = 2,
-    TabMenu = 3,
-    TabCount = 4,
+    TabExperimental = 3, // Build 63: work in progress (subtitles, reticle, textures)
+    TabMenu = 4,
+    TabCount = 5,
 };
-inline constexpr std::array<const char*, TabCount> TAB_TITLES{"GENERAL", "HUD", "ADVANCED", "MOD MENU"};
+inline constexpr std::array<const char*, TabCount> TAB_TITLES{"GENERAL", "HUD", "ADVANCED", "EXPERIMENTAL", "MOD MENU"};
 
 // Build 25: collapsible sections of the GAME HUD band (bit numbers in HudTune::collapsed).
 enum MenuSection : int {
@@ -1178,8 +1184,24 @@ private:
         add_element(GroupWeapons);
         add_element(GroupTutorial);
         add_element(GroupObjective); // Build 53
+
+        // ==== EXPERIMENTAL (Build 63): work in progress ====
+        tab = TabExperimental;
+        column = 0;
+        add_header("SUBTITLES", "WORK IN PROGRESS");
+        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleSubtitleMode, "Subtitles",
+            "A = New (own panel: no AFW doubling, tune it below) or Original (drawn as the game and REFramework do)");
         add_element(GroupSubtitles); // Build 58
-        // Build 60: the reticle stays where the gun points; only its depth (Eye gap) is tuned.
+        add_header("TEXTURES", "WORK IN PROGRESS");
+        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleSharpTextures, "Sharp textures",
+            "A = On: the game keeps high resolution textures loaded in VR (uses more VRAM). Off: the game's own choice");
+        add_row(MenuRow::Kind::Action, -1, -1, ActionReloadTextures, "Reload textures",
+            "A = test: drop and reload the game's streamed textures now (may hitch). For comparing texture detail");
+        column = 1;
+        add_header("RETICLE", "WORK IN PROGRESS");
+        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleReticleMode, "Reticle",
+            "A = New (own layer: no AFW doubling, follows the game camera; tune it below) or Original (as before)");
+        // Build 60: the reticle stays where the gun points.
         add_section(section_for_group(GroupReticle), GROUP_TITLES[GroupReticle]);
         m_rows.back().group = GroupReticle;
         add_row(MenuRow::Kind::Toggle, GroupReticle, -1, ActionToggleHackLock, "Lock", "A = lock or unlock this element (locked = its values cannot change)");
@@ -1189,7 +1211,7 @@ private:
         add_row(MenuRow::Kind::Value, GroupReticle, FieldY, ActionNone, "Up / down",
             "A = edit. Moves the reticle up or down onto where your shots land");
         add_row(MenuRow::Kind::Value, GROUP_SCREEN, ScreenReticleDist, ActionNone, "Distance",
-            "A = edit. How far away the gun reticle is shown (meters). Its size in view stays the same");
+            "A = edit. How far away the gun reticle is shown (meters): its depth. Its size in view stays the same");
         add_row(MenuRow::Kind::Action, GroupReticle, -1, ActionResetGroup, "Reset to defaults", "A = back to the starting values (blocked while locked)");
 
         // ==== ADVANCED ====
@@ -1205,18 +1227,10 @@ private:
             "A = Headset (hacking circle, reticle, enemy markers line up on any headset) or Flat (the old monitor projection)");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleLowHealth, "Low health edges",
             "A = hide or show the red effect at the screen edges when health is low (made for a flat monitor)");
-        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleSharpTextures, "Sharp textures",
-            "A = On: the game keeps high resolution textures loaded in VR (uses more VRAM). Off: the game's own choice");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleMenuNative, "Native in menus",
             "A = On: full-screen menus (Firmware Updater, terminals...) draw in NATIVE while open, no AFW trails. Off: keep AFW");
         column = 1;
         add_header("DEVELOPER", "TOOLS");
-        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleSubtitleMode, "Subtitles",
-            "A = New (own panel: no AFW doubling, SUBTITLES section) or Original (drawn as the game and REFramework do)");
-        add_row(MenuRow::Kind::Action, -1, -1, ActionReloadTextures, "Reload textures",
-            "A = test: drop and reload the game's streamed textures now (may hitch). For comparing texture detail");
-        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleReticleMode, "Reticle",
-            "A = New (own layer: no AFW doubling, RETICLE Size and Distance) or Original (drawn as before Build 60)");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleHackBackdrop, "Door hack backdrop",
             "A = hide or show the dark backdrop behind the door and lock hacking HUD");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleCaptureCorners, "Fixed HUD capture",
@@ -2697,12 +2711,13 @@ inline std::vector<AnchoredBox> anchored_boxes_px(const HudTune& t, float w, flo
             }
         }
         auto b = box_for(g);
-        const float ady = anchor_dy(g, w, h); // Build 62: bottom-anchored subtitles
+        const float ady = anchor_dy(g, w, h); // Build 62: bottom-anchored subtitles (capture area only)
+        const auto db = b; // Build 63: the panel placement uses the centred frame, like every other element
         b[1] += ady;
         b[3] += ady;
         const auto& gt = t.flat_groups[g];
         const float px = FLAT_PIVOTS[g][0];
-        const float py = FLAT_PIVOTS[g][1] + ady;
+        const float py = FLAT_PIVOTS[g][1];
         // Build 56: the game draws the element at full size (its own layout, moved to its capture spot); this area is cut
         // out and shown on the element's own quad.
         const auto sh = fixed_capture_shift(t, g, w, h);
@@ -2715,10 +2730,10 @@ inline std::vector<AnchoredBox> anchored_boxes_px(const HudTune& t, float w, flo
         // Where the quad goes on the panel (buffer pixels): the area as the Builds 21-55 in-game Size, Left / right and
         // Up / down put it (grown around the element's pivot), so existing tuning keeps its place.
         const float k = gt.size;
-        const float bx0 = px + k * (b[0] - px) + gt.x;
-        const float by0 = py + k * (b[1] - py) + gt.y;
-        const float bx1 = px + k * (b[2] - px) + gt.x;
-        const float by1 = py + k * (b[3] - py) + gt.y;
+        const float bx0 = px + k * (db[0] - px) + gt.x;
+        const float by0 = py + k * (db[1] - py) + gt.y;
+        const float bx1 = px + k * (db[2] - px) + gt.x;
+        const float by1 = py + k * (db[3] - py) + gt.y;
         a.dcx = ox + s * (bx0 + bx1) * 0.5f;
         a.dcy = oy + s * (by0 + by1) * 0.5f;
         a.dw = s * std::fabs(bx1 - bx0);
