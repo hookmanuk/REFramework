@@ -3425,8 +3425,9 @@ PragmataRowView pragmata_row_view(const pragmatavr::HudTune& t, const pragmatavr
             v.value = pragmatavr::HudTuning::format_screen(t, row.field);
             v.invert_on = t.screen_invert[row.field];
             v.dim = !t.hud_panel && (t.flat_test || !t.hud_fixed); // ANCHORED panel, or the room-fixed 3D HUD
-            if (row.field == pragmatavr::ScreenReticleDist) {
-                v.dim = !t.reticle_new || pragmatavr::group_locked(t, pragmatavr::GroupReticle); // Build 61
+            if (row.field == pragmatavr::ScreenReticleDist || row.field == pragmatavr::ScreenReticleDepthScale) {
+                v.dim = !t.reticle_new || pragmatavr::group_locked(t, pragmatavr::GroupReticle) ||
+                        (row.field == pragmatavr::ScreenReticleDepthScale && !t.reticle_auto_depth); // Build 61
             }
         } else if (row.group == pragmatavr::GROUP_ENEMY) {
             v.value = fmt::format("{:+.0f}", t.enemy_bar[row.field]);
