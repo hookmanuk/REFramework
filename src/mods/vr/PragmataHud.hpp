@@ -206,6 +206,19 @@ struct ReticleAim {
 };
 inline ReticleAim g_reticle_aim{};
 
+// Reticle depth (port of uevrlib's reticule targeting: trace along the aim, show the reticle at what it hits).
+// pragmata_reticle_depth::tick (main thread, before PrerenderGUI) casts a physics ray from the game camera along the
+// reticle's direction and stores how far along the reticle's axis the first hit is; the reticle layer
+// (D3D12Component, render thread) is then placed at that depth instead of the fixed RETICLE Distance.
+struct ReticleDepth {
+    std::atomic<float> tan_x{0.0f}, tan_y{0.0f}; // reticle direction (tan, x right, y up), written by the layer code
+    std::atomic<float> depth_m{0.0f};            // smoothed depth along the reticle axis (m), 0 = none yet
+    std::atomic<bool> hit{false};                // the last finished ray hit something
+    std::atomic<int64_t> ms{0};                  // steady clock ms of the last depth update
+    std::atomic<int64_t> seen_ms{0};             // steady clock ms the gun reticle GUI was last drawn
+};
+inline ReticleDepth g_reticle_depth{};
+
 // Build 57: while a snapshot is taken, the GUI draw callbacks collect the names of every GUI drawn (steady clock ms;
 // PragmataFixes logs them), to identify effects such as the low health screen edges.
 inline std::atomic<int64_t> g_gui_list_until_ms{0};
@@ -265,6 +278,15 @@ struct HudTune {
     // Build 60: developer switch for the gun reticle: true = NEW (Build 61: on its own view-space layer, RETICLE Size and
     // Distance), false = ORIGINAL (drawn exactly as in v0.9.1).
     bool reticle_new{false}; // Build 63: ORIGINAL by default (experimental)
+    // Reticle depth: true = TARGET (the reticle is shown at the depth of whatever the aim hits, like uevrlib's
+    // reticule; RETICLE Distance is used when the aim hits nothing), false = FIXED (always at RETICLE Distance).
+    // Only used with reticle_new.
+    bool reticle_auto_depth{true};
+    float reticle_depth_min{1.0f};  // hits closer than this (m from the game camera) are skipped (the player, the camera)
+    float reticle_depth_max{100.0f}; // ray length (m); also the furthest the reticle is shown
+    float reticle_depth_smooth{0.06f}; // smoothing time constant (s); 0 = none
+    int reticle_ray_layer{-1};      // collision layer for the ray (-1 = the query's default filter)
+    uint32_t reticle_ray_mask{0xFFFFFFFFu}; // collision mask bits for the ray (only used with reticle_ray_layer >= 0)
     // Build 61: the subtitle GUI (ini subtitle_gui) and whether it is pinned to its monitor anchor while the HUD panels
     // are on (the game otherwise places walk-and-talk subtitles next to the speaker, outside their capture area).
     std::string subtitle_gui{"ui2010Gui"};
@@ -718,6 +740,7 @@ enum MenuAction : int {
     ActionToggleLowHealth,      // Build 57
     ActionToggleSharpTextures,  // Build 59
     ActionToggleReticleMode,    // Build 60
+    ActionToggleReticleDepth,   // reticle depth: TARGET / FIXED
     ActionToggleSubtitleMode,   // Build 62
     ActionReloadTextures,       // Build 62 (developer test)
 };
@@ -1214,8 +1237,10 @@ private:
             "A = edit. Moves the reticle sideways onto where your shots land");
         add_row(MenuRow::Kind::Value, GroupReticle, FieldY, ActionNone, "Up / down",
             "A = edit. Moves the reticle up or down onto where your shots land");
+        add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleReticleDepth, "Depth",
+            "A = Target (the reticle sits at the depth of what you aim at) or Fixed (always at Distance)");
         add_row(MenuRow::Kind::Value, GROUP_SCREEN, ScreenReticleDist, ActionNone, "Distance",
-            "A = edit. How far away the gun reticle is shown (meters): its depth. Its size in view stays the same");
+            "A = edit. How far away the gun reticle is shown (meters) with Depth Fixed, or when the aim hits nothing");
         add_row(MenuRow::Kind::Action, GroupReticle, -1, ActionResetGroup, "Reset to defaults", "A = back to the starting values (blocked while locked)");
 
         // ==== ADVANCED ====
@@ -1405,6 +1430,16 @@ private:
         s += fmt::format("sharp_textures={}\n", t.sharp_textures ? 1 : 0);
         s += "# reticle_new: 1 = gun reticle on its own layer (RETICLE Size and Distance), 0 = original drawing (Build 61).\n";
         s += fmt::format("reticle_new={}\n", t.reticle_new ? 1 : 0);
+        s += "# reticle_auto_depth: 1 = the reticle is shown at the depth of what the aim hits (a physics ray from the game\n";
+        s += "#   camera), 0 = always at RETICLE Distance. reticle_depth_min / _max: hits closer than min are skipped, max is\n";
+        s += "#   the ray length (m). reticle_depth_smooth: smoothing time (s). reticle_ray_layer: collision layer for the ray\n";
+        s += "#   (-1 = default filter), reticle_ray_mask: its mask bits (hex), used with a layer.\n";
+        s += fmt::format("reticle_auto_depth={}\n", t.reticle_auto_depth ? 1 : 0);
+        s += fmt::format("reticle_depth_min={:.2f}\n", t.reticle_depth_min);
+        s += fmt::format("reticle_depth_max={:.1f}\n", t.reticle_depth_max);
+        s += fmt::format("reticle_depth_smooth={:.3f}\n", t.reticle_depth_smooth);
+        s += fmt::format("reticle_ray_layer={}\n", t.reticle_ray_layer);
+        s += fmt::format("reticle_ray_mask=0x{:08X}\n", t.reticle_ray_mask);
         s += "# subtitle_gui: the GUI that draws the subtitles (Build 61; none = subtitles not moved to a panel).\n";
         s += "# subtitle_pin: 1 = subtitles held at their screen spot while shown on their panel (not next to the speaker).\n";
         s += fmt::format("subtitle_gui={}\n", t.subtitle_gui.empty() ? std::string{"none"} : t.subtitle_gui);
@@ -1612,6 +1647,15 @@ private:
                 }
                 continue;
             }
+            // Reticle depth: the mask is a 32 bit value (hex or decimal), too wide for the float parse below.
+            if (key == "reticle_ray_mask") {
+                try {
+                    t->reticle_ray_mask = (uint32_t)std::stoul(val_str, nullptr, 0);
+                } catch (...) {
+                    spdlog::warn("[PragmataVR] pragmatavr_hud.ini: bad value for {}: {}", key, val_str);
+                }
+                continue;
+            }
 
             float val = 0.0f;
             try {
@@ -1637,6 +1681,11 @@ private:
                 else if (key == "hide_low_health") t->hide_low_health = val != 0.0f;
                 else if (key == "sharp_textures") t->sharp_textures = val != 0.0f;
                 else if (key == "reticle_new") t->reticle_new = val != 0.0f;
+                else if (key == "reticle_auto_depth") t->reticle_auto_depth = val != 0.0f;
+                else if (key == "reticle_depth_min") t->reticle_depth_min = std::clamp(val, 0.0f, 20.0f);
+                else if (key == "reticle_depth_max") t->reticle_depth_max = std::clamp(val, 2.0f, 1000.0f);
+                else if (key == "reticle_depth_smooth") t->reticle_depth_smooth = std::clamp(val, 0.0f, 1.0f);
+                else if (key == "reticle_ray_layer") t->reticle_ray_layer = std::clamp((int)val, -1, 63);
                 else if (key == "subtitle_pin") t->subtitle_pin = val != 0.0f;
                 else if (key == "subtitles_new") t->subtitles_new = val != 0.0f;
                 else if (key == "items_area") t->items_area = std::clamp((int)val, 0, 2);
@@ -2150,6 +2199,11 @@ private:
                     t->subtitles_new = !t->subtitles_new;
                     commit(t);
                     spdlog::info("[PragmataVR] Menu: subtitles {}", t->subtitles_new ? "new" : "original");
+                    play_click(true);
+                } else if (row.action == ActionToggleReticleDepth) {
+                    t->reticle_auto_depth = !t->reticle_auto_depth;
+                    commit(t);
+                    spdlog::info("[PragmataVR] Menu: reticle depth {}", t->reticle_auto_depth ? "target" : "fixed");
                     play_click(true);
                 } else if (row.action == ActionToggleReticleMode) {
                     t->reticle_new = !t->reticle_new;

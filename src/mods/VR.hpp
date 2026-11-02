@@ -256,6 +256,11 @@ public:
         m_hmd_oriented_audio->toggle();
     }
 
+    // PragmataVR reticle depth: the game camera's own transform for this frame (before the headset pose is applied).
+    const Matrix4x4f& get_original_camera_matrix() const {
+        return m_original_camera_matrix;
+    }
+
     const Matrix4x4f& get_last_render_matrix() {
         return m_render_camera_matrix;
     }

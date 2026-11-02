@@ -3474,6 +3474,11 @@ PragmataRowView pragmata_row_view(const pragmatavr::HudTune& t, const pragmatavr
             v.value = t.reticle_new ? "NEW" : "ORIGINAL";
             v.value_color = t.reticle_new ? ACCENT : AMBER;
             break;
+        case pragmatavr::ActionToggleReticleDepth:
+            v.value = t.reticle_auto_depth ? "TARGET" : "FIXED";
+            v.value_color = t.reticle_auto_depth ? ACCENT : TEXT_BRIGHT;
+            v.dim = !t.reticle_new;
+            break;
         case pragmatavr::ActionToggleSharpTextures:
             v.value = t.sharp_textures ? "ON" : "OFF";
             v.value_color = ACCENT;

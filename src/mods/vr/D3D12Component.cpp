@@ -1009,7 +1009,21 @@ void pragmata_update_hud_quad(runtimes::OpenXR* openxr) {
             const float sw = (float)p.src_w;
             const float sh = (float)p.src_h;
             const float s = (std::min)(sw / 1920.0f, sh / 1080.0f);
-            const float dist = tune->screen[pragmatavr::ScreenReticleDist];
+            // Reticle depth: hand the reticle's direction to the ray cast (main thread), and with Depth = TARGET show the
+            // reticle at the depth of what the aim hits (RETICLE Distance when it hits nothing or no ray has finished
+            // lately). Its size in view stays the same (the quad scales with the depth below), only its depth changes.
+            auto& rdepth = pragmatavr::g_reticle_depth;
+            rdepth.tan_x.store(tx, std::memory_order_relaxed);
+            rdepth.tan_y.store(ty, std::memory_order_relaxed);
+            float dist = tune->screen[pragmatavr::ScreenReticleDist];
+            if (tune->reticle_auto_depth) {
+                const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                const float d = rdepth.depth_m.load(std::memory_order_relaxed);
+                if (d > 0.0f && std::isfinite(d) && now - rdepth.ms.load(std::memory_order_relaxed) < 500) {
+                    dist = d;
+                }
+            }
             const float k = (std::max)(0.05f, rg.size);
             const float m_per_canvas_px = dist / (960.0f * m00);
             const glm::vec3 local{tx * dist, ty * dist, -dist};

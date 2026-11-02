@@ -64,6 +64,7 @@
 #include "PragmataScreenProbe.hpp"
 #include "PragmataMarkerFix.hpp"
 #include "PragmataTexDiag.hpp"
+#include "PragmataReticleDepth.hpp"
 
 class PragmataFixes : public Mod {
 public:
@@ -97,6 +98,11 @@ public:
             if (s_gui_list.size() < 128) {
                 s_gui_list.emplace(name);
             }
+        }
+
+        // Reticle depth: the gun reticle is being drawn (the depth ray is only cast while it is).
+        if (h == "ui2001Gui"_fnv || h == "ui3300Gui"_fnv) {
+            pragmatavr::g_reticle_depth.seen_ms.store(now_ms(), std::memory_order_relaxed);
         }
 
         // Build 62: tutorial / info windows (the subtitles give way while they show).
@@ -166,6 +172,7 @@ public:
             }
         }
         pragmata_marker_fix::install(); // Build 50, once
+        pragmata_reticle_depth::tick(); // reticle depth: the aim ray for the New reticle (Depth = TARGET)
         if (pragmatavr::HudTuning::get().tune()->screen_probe) {
             pragmata_screen_probe::install(); // Build 48, once
             pragmata_screen_probe::report();
