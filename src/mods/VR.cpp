@@ -925,7 +925,18 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
 
     auto& layer_data = m_scene_layer_data[layer];
 
-    for (auto& d : layer_data) {
+#if defined(PRAGMATA)
+    // PragmataVR reflections fix. Pragmata draws one eye per frame (Native and AFW alike), so the previous frame's image,
+    // which screen space reflections reproject to find the reflected colour, is the OTHER eye's. The fixes above tell
+    // the engine the previous camera was the same eye two frames ago (right for the upscalers' per-eye history), so
+    // SSR reads the other eye's image as if it were this eye's and the reflections slide as the head moves. Here the
+    // chosen scene info gets the camera that really drew the previous image: its own view-projection of last frame.
+    // Which of the five scene infos SSR reads is not known yet (Experimental: Reflections fix picks one, or all).
+    const int ssr_fix = pragmatavr::HudTuning::get().tune()->ssr_fix; // 0 = off, 1..5 = scene info 0..4, 6 = all
+#endif
+
+    for (size_t i = 0; i < layer_data.size(); ++i) {
+        auto& d = layer_data[i];
         if (d.scene_info != nullptr) {
             if (is_fix_dlss() && m_multipass.pass == 0) {
                 fix_motion_vectors(d);
@@ -936,6 +947,13 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
             if (m_multipass.pass == 0) {
                 d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
             }
+#if defined(PRAGMATA)
+            if (ssr_fix != 0 && (ssr_fix == 6 || ssr_fix == (int)i + 1) && d.has_last_frame_view_projection) {
+                d.scene_info->old_view_projection_matrix = d.last_frame_view_projection;
+            }
+            d.last_frame_view_projection = d.scene_info->view_projection_matrix;
+            d.has_last_frame_view_projection = true;
+#endif
         }
     }
 }
@@ -3479,6 +3497,10 @@ PragmataRowView pragmata_row_view(const pragmatavr::HudTune& t, const pragmatavr
             v.value = t.reticle_auto_depth ? "TARGET" : "FIXED";
             v.value_color = t.reticle_auto_depth ? ACCENT : TEXT_BRIGHT;
             v.dim = !t.reticle_new;
+            break;
+        case pragmatavr::ActionCycleSsrFix:
+            v.value = pragmatavr::ssr_fix_label(t.ssr_fix);
+            v.value_color = t.ssr_fix != 0 ? ACCENT : AMBER;
             break;
         case pragmatavr::ActionToggleSharpTextures:
             v.value = t.sharp_textures ? "ON" : "OFF";

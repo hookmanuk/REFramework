@@ -390,6 +390,10 @@ private:
         sdk::renderer::SceneInfo* scene_info{};
         Matrix4x4f view_projection_matrix{};
         std::array<Matrix4x4f, 2> old_view_matrix{};
+        // PragmataVR reflections fix: this scene info's real view-projection of the last frame drawn (the other eye's,
+        // as one eye is drawn per frame), kept across frames.
+        Matrix4x4f last_frame_view_projection{};
+        bool has_last_frame_view_projection{false};
     };
 
     std::unordered_map<sdk::renderer::layer::Scene*, std::array<SceneLayerData, 5>> m_scene_layer_data {};
