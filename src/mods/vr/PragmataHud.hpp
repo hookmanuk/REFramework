@@ -283,9 +283,8 @@ struct HudTune {
     // resolution and no load level bias (PragmataTexDiag.hpp), so textures do not stay at low detail in the headset.
     bool sharp_textures{true};
     // Reflections fix (VR::on_scene_layer_update): screen space reflections are given the camera that really drew the
-    // previous frame's image (the other eye's), so they stop sliding with the head. 0 = off (as before), 1..5 = only
-    // scene info 0..4 (main, depth distortion, filter, jitter disable, z prepass), 6 = all of them. Which one SSR reads
-    // is not known yet: the right one fixes the reflections without bringing back upscaler wobbling.
+    // previous frame's image (the other eye's), so they stop sliding with the head. 0 = off (as before), 1 = on (the main
+    // scene info; its motion vectors are corrected back to same-eye for the upscaler and the AFW warp, PragmataSsrFix.hpp).
     int ssr_fix{0};
     // Build 60: developer switch for the gun reticle: true = NEW (Build 61: on its own view-space layer, RETICLE Size and
     // Distance), false = ORIGINAL (drawn exactly as in v0.9.1).
@@ -759,15 +758,7 @@ enum MenuAction : int {
 
 // Reflections fix: menu label for HudTune::ssr_fix.
 inline const char* ssr_fix_label(int v) {
-    switch (v) {
-    case 1: return "MAIN";
-    case 2: return "DEPTH DISTORTION";
-    case 3: return "FILTER";
-    case 4: return "JITTER DISABLE";
-    case 5: return "Z PREPASS";
-    case 6: return "ALL";
-    default: return "OFF";
-    }
+    return v != 0 ? "ON" : "OFF";
 }
 
 class HudTuning {
@@ -1252,7 +1243,7 @@ private:
             "A = test: drop and reload the game's streamed textures now (may hitch). For comparing texture detail");
         add_header("REFLECTIONS", "WORK IN PROGRESS");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionCycleSsrFix, "Reflections fix",
-            "A = next: which render data gets the reflections fix. Pick the one where reflections stay put and nothing wobbles");
+            "A = on / off: screen space reflections stay put in AFW instead of sliding with the head");
         column = 1;
         add_header("RETICLE", "WORK IN PROGRESS");
         add_row(MenuRow::Kind::Toggle, -1, -1, ActionToggleReticleMode, "Reticle",
@@ -1459,8 +1450,7 @@ private:
         s += fmt::format("hide_low_health={}\n", t.hide_low_health ? 1 : 0);
         s += "# sharp_textures: 1 = keep high resolution textures loaded in VR (Build 59).\n";
         s += fmt::format("sharp_textures={}\n", t.sharp_textures ? 1 : 0);
-        s += "# ssr_fix: screen space reflections fix. 0 = off, 1..5 = scene info 0..4 only (main, depth distortion, filter,\n";
-        s += "#   jitter disable, z prepass), 6 = all.\n";
+        s += "# ssr_fix: screen space reflections fix (experimental). 0 = off, 1 = on.\n";
         s += fmt::format("ssr_fix={}\n", t.ssr_fix);
         s += "# reticle_new: 1 = gun reticle on its own layer (RETICLE Size and Distance), 0 = original drawing (Build 61).\n";
         s += fmt::format("reticle_new={}\n", t.reticle_new ? 1 : 0);
@@ -1702,7 +1692,7 @@ private:
                 else if (key == "menu_native") t->menu_native = val != 0.0f;
                 else if (key == "hide_low_health") t->hide_low_health = val != 0.0f;
                 else if (key == "sharp_textures") t->sharp_textures = val != 0.0f;
-                else if (key == "ssr_fix") t->ssr_fix = std::clamp((int)val, 0, 6);
+                else if (key == "ssr_fix") t->ssr_fix = val != 0.0f ? 1 : 0;
                 else if (key == "reticle_new") t->reticle_new = val != 0.0f;
                 else if (key == "reticle_auto_depth") t->reticle_auto_depth = val != 0.0f;
                 else if (key == "reticle_depth_min") t->reticle_depth_min = std::clamp(val, 0.0f, 20.0f);
@@ -2233,7 +2223,7 @@ private:
                     spdlog::info("[PragmataVR] Menu: reticle {}", t->reticle_new ? "new" : "original");
                     play_click(true);
                 } else if (row.action == ActionCycleSsrFix) {
-                    t->ssr_fix = (t->ssr_fix + 1) % 7;
+                    t->ssr_fix = t->ssr_fix != 0 ? 0 : 1;
                     commit(t);
                     spdlog::info("[PragmataVR] Menu: reflections fix {}", ssr_fix_label(t->ssr_fix));
                     play_click(true);

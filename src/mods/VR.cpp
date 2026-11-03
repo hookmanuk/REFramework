@@ -67,6 +67,7 @@
 #include "vr/PragmataHud.hpp"
 #include "vr/PragmataMenuFont.hpp"
 #include "vr/PragmataPerf.hpp"
+#include "vr/PragmataSsrFix.hpp"
 #include <limits>
 #endif
 #include <MinHook.h>
@@ -912,9 +913,13 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
 
     if (is_foveated_pass && m_scene_layer_data[layer].size() > 0) {
         SceneLayerData& d = m_scene_layer_data[layer][0];
-        oldViewMatrix[eye_index] = is_fix_dlss() ? d.old_view_matrix[eye_index] : d.old_view_matrix[other_eye_index];
-        oldFoveatedProjectionMatrix[eye_index] = is_fix_dlss() ? get_runtime()->old_foveated_projections[1][eye_index]
-                                                               : get_runtime()->old_foveated_projections[0][other_eye_index];
+        bool same_eye_mv = is_fix_dlss();
+#if defined(PRAGMATA)
+        same_eye_mv = same_eye_mv && !pragmata_ssr_fix::mvs_are_other_eye(); // reflections fix without an upscaler: other eye
+#endif
+        oldViewMatrix[eye_index] = same_eye_mv ? d.old_view_matrix[eye_index] : d.old_view_matrix[other_eye_index];
+        oldFoveatedProjectionMatrix[eye_index] = same_eye_mv ? get_runtime()->old_foveated_projections[1][eye_index]
+                                                             : get_runtime()->old_foveated_projections[0][other_eye_index];
     }
 
     auto fix_motion_vectors = [&](SceneLayerData& d) {
@@ -930,9 +935,10 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
     // which screen space reflections reproject to find the reflected colour, is the OTHER eye's. The fixes above tell
     // the engine the previous camera was the same eye two frames ago (right for the upscalers' per-eye history), so
     // SSR reads the other eye's image as if it were this eye's and the reflections slide as the head moves. Here the
-    // chosen scene info gets the camera that really drew the previous image: its own view-projection of last frame.
-    // Which of the five scene infos SSR reads is not known yet (Experimental: Reflections fix picks one, or all).
-    const int ssr_fix = pragmatavr::HudTuning::get().tune()->ssr_fix; // 0 = off, 1..5 = scene info 0..4, 6 = all
+    // main scene info gets the camera that really drew the previous image: its own view-projection of last frame.
+    // The engine's motion vectors come from the same matrix, so they then point at the other eye: PragmataSsrFix.hpp
+    // corrects them back to same-eye for the upscaler and the AFW warp.
+    const int ssr_fix = pragmatavr::HudTuning::get().tune()->ssr_fix; // 0 = off, 1 = on
 #endif
 
     for (size_t i = 0; i < layer_data.size(); ++i) {
@@ -944,11 +950,17 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
                 // TAA fix
                 d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
             }
+#if defined(PRAGMATA)
+            if (i == 0 && m_multipass.pass == 0 && ssr_fix != 0) { // reflections fix: the cameras its motion vector correction needs
+                pragmata_ssr_fix::note_views(eye_index, d.scene_info->view_matrix, d.old_view_matrix[eye_index],
+                                             d.has_last_frame_view_projection ? &d.last_frame_view_projection : nullptr);
+            }
+#endif
             if (m_multipass.pass == 0) {
                 d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
             }
 #if defined(PRAGMATA)
-            if (ssr_fix != 0 && (ssr_fix == 6 || ssr_fix == (int)i + 1) && d.has_last_frame_view_projection) {
+            if (ssr_fix != 0 && i == 0 && d.has_last_frame_view_projection) {
                 d.scene_info->old_view_projection_matrix = d.last_frame_view_projection;
             }
             d.last_frame_view_projection = d.scene_info->view_projection_matrix;
@@ -1109,7 +1121,12 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(
                 }
 
                 if (vr->is_fix_dlss()) {
+#if defined(PRAGMATA)
+                    // The eye drawn: the frame counters change under the render thread (see pragmata_ssr_fix::render_eye).
+                    EyeIndex nEye = pragmata_ssr_fix::render_eye(vr->get_vr_frame_count() % 2) == 0 ? EyeLeft : EyeRight;
+#else
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
+#endif
                     auto currHandle = vr->vrDLSSHandle[0];
                     if (nEye == EyeLeft) {
                         currHandle = vr->vrDLSSHandle[0];
@@ -1117,8 +1134,20 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(
                         currHandle = vr->vrDLSSHandle[1];
                     }
 
+#if defined(PRAGMATA)
+                    // Reflections fix: DLSS gets same-eye motion vectors (the game's parameter is put back after the call).
+                    ID3D12Resource* pragmata_corrected = pragmata_ssr_fix::correct(*vr, InCmdList, nEye, depth, mvScaleX, mvScaleY);
+                    if (pragmata_corrected != nullptr) {
+                        InParameters->Set(NVSDK_NGX_Parameter_MotionVectors, pragmata_corrected);
+                    }
+#endif
                     // current rendered eye
                     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, currHandle, InParameters, InCallback);
+#if defined(PRAGMATA)
+                    if (pragmata_corrected != nullptr) {
+                        InParameters->Set(NVSDK_NGX_Parameter_MotionVectors, motionVectors);
+                    }
+#endif
                     if (NVSDK_NGX_FAILED(result)) {
                         spdlog::error("Failed DLSS 00, code = 0x{0:x}", result);
                     }
@@ -1193,7 +1222,12 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
                     vr->d3d12Renderer->Copy(InCmdList, vr->foveatedDepthDesc, src);
                 }
                 if (vr->is_fix_dlss()) {
+#if defined(PRAGMATA)
+                    // The eye drawn: the frame counters change under the render thread (see pragmata_ssr_fix::render_eye).
+                    EyeIndex nEye = pragmata_ssr_fix::render_eye(vr->get_vr_frame_count() % 2) == 0 ? EyeLeft : EyeRight;
+#else
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
+#endif
                     auto currHandle = vr->vrContexts[0];
                     if (nEye == EyeLeft) {
                         currHandle = vr->vrContexts[0];
@@ -1201,6 +1235,13 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
                         currHandle = vr->vrContexts[1];
                     }
 
+#if defined(PRAGMATA)
+                    ffxDispatchDescUpscale pragmata_fixed = *upscaleDesc;
+                    if (auto corrected = pragmata_ssr_fix::correct(*vr, InCmdList, nEye, depth, mvScaleX, mvScaleY); corrected != nullptr) {
+                        pragmata_fixed.motionVectors.resource = corrected; // reflections fix: same-eye motion vectors
+                        desc = &pragmata_fixed.header;
+                    }
+#endif
                     // current rendered eye
                     auto result = o_ffxDispatch(&currHandle, desc);
                     if (result != 0) {

@@ -16,6 +16,7 @@
 #include "PragmataHud.hpp"
 #include "PragmataGpuTrace.hpp"
 #include "PragmataDepthProbe.hpp"
+#include "PragmataSsrFix.hpp"
 
 namespace {
 // PragmataVR: copies the VR mod menu (drawn by ImGui into REFramework's IMGUI render target) into the
@@ -1456,6 +1457,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         params.InUIColorAlpha = NULL;
         params.IsHudlessColor = true;
         params.MotionVectorsType = vr->is_fix_dlss()? Normal : FromOtherEye;
+#if defined(PRAGMATA)
+        if (pragmata_ssr_fix::mvs_are_other_eye()) {
+            params.MotionVectorsType = FromOtherEye; // reflections fix without an upscaler: the vectors point at the other eye
+        }
+#endif
         params.InMotionScale[0] = (float)colorDesc.Width;
         params.InMotionScale[1] = (float)colorDesc.Height;
         params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
