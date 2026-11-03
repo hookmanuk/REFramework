@@ -169,6 +169,23 @@ inline const HookedVtable* hooked(ID3D12GraphicsCommandList* cl) {
     return nullptr;
 }
 
+// The originals for cl. A vtable copied from a hooked one after it was patched (runtime layers build some by copying) is
+// not registered but reaches the hooks; the registered one whose neighbouring entries match is where it came from.
+inline const HookedVtable& originals(ID3D12GraphicsCommandList* cl) {
+    if (const auto* h = hooked(cl)) {
+        return *h;
+    }
+    void** vt = *reinterpret_cast<void***>(cl);
+    const int n = g_vtable_count.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i) {
+        void** o = g_vtables[i].vt;
+        if (o[VT_SET_DESCRIPTOR_HEAPS - 1] == vt[VT_SET_DESCRIPTOR_HEAPS - 1] && o[VT_SET_COMPUTE_ROOT_SIGNATURE + 1] == vt[VT_SET_COMPUTE_ROOT_SIGNATURE + 1]) {
+            return g_vtables[i];
+        }
+    }
+    return g_vtables[0];
+}
+
 inline void STDMETHODCALLTYPE hk_set_heaps(ID3D12GraphicsCommandList* cl, UINT n, ID3D12DescriptorHeap* const* heaps) {
     {
         std::scoped_lock _{g_list_mutex};
@@ -176,7 +193,7 @@ inline void STDMETHODCALLTYPE hk_set_heaps(ID3D12GraphicsCommandList* cl, UINT n
         st.heap_count = (std::min)(n, 2u);
         for (UINT i = 0; i < st.heap_count; ++i) st.heaps[i] = heaps[i];
     }
-    hooked(cl)->set_heaps(cl, n, heaps);
+    originals(cl).set_heaps(cl, n, heaps);
 }
 
 inline void STDMETHODCALLTYPE hk_set_compute_rs(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* rs) {
@@ -184,7 +201,7 @@ inline void STDMETHODCALLTYPE hk_set_compute_rs(ID3D12GraphicsCommandList* cl, I
         std::scoped_lock _{g_list_mutex};
         g_lists[cl].compute_rs = rs;
     }
-    hooked(cl)->set_compute_rs(cl, rs);
+    originals(cl).set_compute_rs(cl, rs);
 }
 
 // Hooks the vtable cl uses (once per vtable); nullptr if it cannot.
@@ -198,6 +215,9 @@ inline const HookedVtable* track_list(ID3D12GraphicsCommandList* cl) {
     }
     const int n = g_vtable_count.load();
     void** vt = *reinterpret_cast<void***>(cl);
+    if (vt[VT_SET_DESCRIPTOR_HEAPS] == reinterpret_cast<void*>(&hk_set_heaps)) {
+        return &originals(cl); // a copy of a hooked vtable: already reaches the hooks
+    }
     DWORD old{};
     if (n >= (int)g_vtables.size() || !VirtualProtect(&vt[VT_SET_DESCRIPTOR_HEAPS], 2 * sizeof(void*), PAGE_READWRITE, &old)) {
         return nullptr;
